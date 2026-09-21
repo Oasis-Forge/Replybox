@@ -106,6 +106,31 @@ class InboxProvider extends ChangeNotifier {
 
   /// Turns a source app on or off (INB-22). What it already captured stays in
   /// the inbox (CAP-1).
+  ///
+  /// Two steps, in this order: the row, then CAP-1's filter. The row first
+  /// because the database is the only authority on what is on; the filter
+  /// immediately after because INB-22 says the switch takes effect from the
+  /// moment it moves, and the listener is what makes that true. Waiting for the
+  /// next resume to mirror the set — which is all that used to happen — loses
+  /// messages in one direction and captures forbidden ones in the other:
+  ///
+  ///  * **On.** The user switches an app on and locks the phone. The listener
+  ///    still has it off, so CAP-1 drops what it posts *before the queue*, and
+  ///    dropped there means gone, not late. INB-22 promises capture "from that
+  ///    moment forward".
+  ///  * **Off.** The user switches an app off and stays in the inbox. The
+  ///    listener still has it on, so the next notification's sender, title and
+  ///    full text are written into the hand-over queue. Ingest refuses to store
+  ///    it, but CAP-1 puts the drop before anything reaches the queue, and text
+  ///    sitting in a file is the thing the rule is about.
+  ///
+  /// The push carries both halves for the OFF direction to be true at all. An
+  /// app that posted while Dart was not running is sitting un-acked in the
+  /// listener's pending list at the moment the switch moves, and on the enabled
+  /// list alone the listener put every such package straight back — so the app
+  /// the user had just turned off kept projecting into the queue until a later
+  /// sync pass. Sending the packages this database holds a row for as well is
+  /// what closes that: this one has a row, it was left out, it is off.
   Future<void> setAppEnabled(
     String package, {
     required bool enabled,
@@ -120,7 +145,46 @@ class InboxProvider extends ChangeNotifier {
       notifyListeners();
       return;
     }
+
+    // Before `load()`, not after: `load()` also reads every conversation, and
+    // CAP-1's drop happens on whatever the listener is holding in the meantime.
+    // Its own read of the apps table is the mirror of what was just written —
+    // the provider's cached list is a frame behind until `load()` returns.
+    Object? pushFailure;
+    try {
+      await _pushEnabledPackages();
+    } catch (e) {
+      pushFailure = e;
+    }
+
     _error = null;
     await load();
+    if (pushFailure != null) {
+      // Surfaced, never swallowed. The row moved and the listener did not, so
+      // the switch on screen is telling the user something the phone is not
+      // doing — silent loss in the ON direction. The database keeps the write:
+      // it is the authority, and the next launch or resume re-mirrors from it.
+      _error = pushFailure;
+      notifyListeners();
+    }
+  }
+
+  /// Mirrors the enabled set down to CAP-1's filter, read fresh from the
+  /// database so this is a mirror and never a merge.
+  ///
+  /// Both lists come off that one read: the enabled packages, and every package
+  /// the table holds a row for. The second is what makes the OFF direction
+  /// immediate rather than eventual (CAP-1, INB-22) — see [setAppEnabled] — and
+  /// reading it twice could hand the listener an enabled package it was told
+  /// nothing is known about.
+  Future<void> _pushEnabledPackages() async {
+    final List<SourceApp> apps = await _repository.allApps();
+    await _services.captureFilter.setEnabledPackages(
+      <String>[
+        for (final SourceApp app in apps)
+          if (app.enabled) app.package,
+      ],
+      <String>[for (final SourceApp app in apps) app.package],
+    );
   }
 }
