@@ -31,6 +31,25 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- CAP-20: notification access is a service declaration, not a requested
+             permission. android:permission names the permission the *system* must
+             hold to bind this service, which is what makes exporting it safe; it is
+             not a <uses-permission> and never appears in the app's permission list,
+             so RUN-2's gate in release.yml stays green with an empty ALLOWED. No
+             <uses-permission> element belongs in this file for capture, or that gate
+             fails the release build.
+
+             No android:label: the system's notification-access page falls back to
+             the application label, and a label here could not come from the message
+             files (LANG-2) and so would ship untranslated. -->
+        <service
+            android:name=".capture.ReplyboxListenerService"
+            android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService"/>
+            </intent-filter>
+        </service>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
@@ -49,7 +68,12 @@
         </intent>
         <!-- INB-16, INB-20: the shipped messaging apps. These are what let the
              app resolve the label and icon of an app it captures from. This
-             list must stay in step with lib/data/shipped_apps.dart. -->
+             list must stay in step with lib/data/shipped_apps.dart and with
+             ShippedApps.PACKAGES in
+             android/app/src/main/kotlin/com/oasisforge/replybox/capture/ShippedApps.kt,
+             which is the copy CAP-1's native filter defaults on. PERM-3 fails
+             if any package can start enabled whose label the disclosure never
+             showed, so the three are one set and one test covers all of them. -->
         <package android:name="com.whatsapp" />
         <package android:name="com.facebook.orca" />
         <package android:name="com.instagram.android" />

@@ -43,6 +43,10 @@ class SpikeListenerService : NotificationListenerService() {
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         append(describe("posted", sbn))
+        // CAP-21's storage half. A no-op unless `spike.sh bridge on` has run and
+        // this is one of the poster's own notifications; see SpikeCaptureBridge for
+        // what it substitutes and what it therefore does not prove (PERM-12).
+        SpikeCaptureBridge.bridge(this, sbn, "posted")
         // Check 5 needs an action that outlives its notification, so the reply
         // action is kept here and fired later, after the notification is gone.
         // This is also the shape PR 5 needs: the action map cannot be rebuilt
@@ -58,6 +62,9 @@ class SpikeListenerService : NotificationListenerService() {
                 .put("removalReason", reason)
                 .put("removalReasonName", reasonName(reason)),
         )
+        // CAP-22 on a bridged raw row: a removal has to reach the queue too, or the
+        // drill's dismiss step would look like a removal the app never heard about.
+        SpikeCaptureBridge.bridge(this, sbn, "removed", reasonName(reason))
     }
 
     private fun describe(event: String, sbn: StatusBarNotification): JSONObject {
