@@ -43,7 +43,11 @@ That is one app out of six. **WhatsApp, Messenger and Instagram are the three wh
 
 A single notification carrying five messages arrived with `text` collapsed to `"fifth message"` — the newest line only — while `EXTRA_MESSAGES` still held all five in order, each with its sender and timestamp. That is exactly the case that decides whether the inbox can tell the truth during a burst: the visible summary loses messages and the structured history does not.
 
-Three separate conversations posted at once arrived as three distinct notifications under one package, distinguished by `tag` and `conversationTitle`, each with its own `groupKey`. A per-package assumption would merge them; a per-`groupKey` one does not.
+Three separate conversations posted at once arrived as three distinct notifications under one package, distinguished by `tag` and `conversationTitle`.
+
+**Correction, 21 September 2026.** An earlier version of this paragraph said the three conversations each carried their own `groupKey`, and that keying on `groupKey` would keep them apart. The dumps committed beside this file say the opposite, and the rule written from it would have been wrong. The three shell conversations all carry `0|com.android.shell|g:Aggregate_AlertingSection`, and the three Google Messages threads all carry `0|com.google.android.apps.messaging|g:incoming_message_group_key` — Android reassigns `groupKey` when it auto-groups an app's notifications. One notification's `groupKey` also changed between its post and its removal. So a per-`groupKey` assumption merges every thread in an app into one, exactly as a per-package assumption does.
+
+What actually separates them is `shortcutId`, which Google Messages supplied per conversation (`"1"`, `"2"`, `"4"`), and failing that `conversationTitle`, and failing that `tag`. That is the order CAP-3 takes, with `groupKey` excluded outright.
 
 ### 3. Survival — not run
 
