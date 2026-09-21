@@ -4,6 +4,18 @@ Notable changes per release, written for users. Versions follow [Semantic Versio
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-09-21
+
+### Added
+- The rules for how Replybox reads your notifications: which apps it reads,
+  how it tells one conversation from another, what happens to a message Android
+  hides, and what it deliberately does not keep. Nothing user-facing changed
+  yet — this is the behaviour the next release is built to.
+
+### Fixed
+- A mistake in the capture spike write-up that would have made every
+  conversation in an app collapse into one. Corrected, with the evidence.
+
 ## [0.1.1] - 2026-09-21
 
 ### Added
