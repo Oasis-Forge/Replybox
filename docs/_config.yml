@@ -1,0 +1,18 @@
+# GitHub Pages serves this folder (docs/RELEASING.md -> Privacy policy), and it
+# publishes every file in it by default. Only the privacy policy is meant for the
+# public: the rest are working documents, and the domain they would appear on is
+# the one the store listing points at.
+#
+# Jekyll's exclude is a list, so it goes stale the moment a doc is added. CI checks
+# that every file here is either excluded or named below as deliberately public.
+exclude:
+  - ROADMAP.md
+  - PRODUCT_RULES.md
+  - PLAN.md
+  - RELEASING.md
+  - STACK_NOTES.md
+  - research
+
+# Not a Jekyll setting: the list CI checks the folder against.
+public:
+  - privacy-policy.md

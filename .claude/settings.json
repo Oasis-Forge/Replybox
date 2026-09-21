@@ -1,0 +1,64 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(flutter analyze*)",
+      "Bash(flutter test*)",
+      "Bash(flutter pub get*)",
+      "Bash(flutter build*)",
+      "Bash(flutter gen-l10n*)",
+      "Bash(dart format*)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(gh pr list*)",
+      "Bash(gh pr view*)",
+      "Bash(gh pr checks*)",
+      "Bash(gh run list*)",
+      "Bash(gh run view*)",
+      "Bash(bash scripts/version.sh*)",
+      "PowerShell(bash scripts/version.sh*)",
+      "PowerShell(flutter analyze*)",
+      "PowerShell(flutter test*)",
+      "PowerShell(flutter pub get*)",
+      "PowerShell(flutter build*)",
+      "PowerShell(flutter gen-l10n*)",
+      "PowerShell(dart format*)",
+      "PowerShell(git status*)",
+      "PowerShell(git diff*)",
+      "PowerShell(git log*)",
+      "PowerShell(gh pr list*)",
+      "PowerShell(gh pr view*)",
+      "PowerShell(gh pr checks*)",
+      "PowerShell(gh run list*)",
+      "PowerShell(gh run view*)"
+    ],
+    "deny": [
+      "Read(./build/**)",
+      "Read(./coverage/**)",
+      "Read(./.dart_tool/**)",
+      "Read(./ios/Flutter/ephemeral/**)",
+      "Read(./android/.gradle/**)",
+      "Read(./.idea/**)",
+      "Read(**/*.png)",
+      "Read(**/*.ico)"
+    ]
+  },
+  "env": {
+    "FLUTTER_SUPPRESS_ANALYTICS": "true"
+  },
+  "bashOutputMaxChars": 12000,
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"$CLAUDE_PROJECT_DIR/.claude/hooks/format-dart.ps1\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

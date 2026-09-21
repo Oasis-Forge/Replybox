@@ -1,0 +1,191 @@
+name: Release
+
+# Every merge to main builds the APK and AAB and checks the release manifest's
+# permissions. CI makes every PR bump the version, so a merge is normally a
+# release; one that leaves the version alone (a Dependabot PR, or a PR merged
+# behind another) is built and checked all the same, and the summary says it is
+# not a release.
+#
+# It leaves nothing behind: no GitHub Release, no artifact, no Play upload, and
+# no tag. The build here is a check that the release build compiles on a clean
+# machine, not a deliverable. What reaches Play is built locally, signed from
+# android/key.properties and uploaded by hand (docs/RELEASING.md). With no tags,
+# the version gate compares against main's own version (scripts/version.sh).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  FLUTTER_VERSION: '3.44.8'
+  PACKAGE_NAME: 'com.replybox.app'
+
+jobs:
+  version:
+    name: Read version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      name: ${{ steps.read.outputs.name }}
+      release: ${{ steps.read.outputs.release }}
+    steps:
+      # Two commits: on main, whether this merge is a release is read by comparing
+      # its version with the commit before it (scripts/version.sh released).
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+
+      - name: Read the pubspec.yaml version
+        id: read
+        run: |
+          name=$(bash scripts/version.sh name)
+          release=false
+          if [ "$GITHUB_REF" = refs/heads/main ]; then
+            # CI compares each PR against main's version, so a merge can leave it
+            # unchanged: a Dependabot PR, which the gate exempts, or a PR merged
+            # behind another that took the same version. Nothing on main can be
+            # fixed by a red build, so that is reported rather than refused -- and
+            # the build below runs either way: a dependency bump is exactly what
+            # can break the release build or add a permission, and this is where
+            # those gates are.
+            release=$(bash scripts/version.sh released)
+          else
+            echo "Not on main: building $name as a check only." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          { echo "name=$name"; echo "release=$release"; } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build and check
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NAME: ${{ needs.version.outputs.name }}
+      RELEASE: ${{ needs.version.outputs.release }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Configure release signing
+        id: signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          # A variable, not a secret: GitHub masks a secret's value everywhere it
+          # appears in a log, and an alias like "upload" would turn every mention of
+          # upload-keystore.jks into ***-keystore.jks.
+          KEY_ALIAS: ${{ vars.ANDROID_KEY_ALIAS || 'upload' }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::notice::ANDROID_KEYSTORE_BASE64 is not set: this build is debug-signed. That is expected — CI publishes nothing, and the bundle that goes to Play is signed and built locally (docs/RELEASING.md)."
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "$KEYSTORE_BASE64" | base64 --decode > android/app/upload-keystore.jks
+          {
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyPassword=$KEY_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "storeFile=upload-keystore.jks"
+          } > android/key.properties
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build app bundle and APK
+        run: |
+          flutter build appbundle --release
+          flutter build apk --release
+
+      # Having the secrets does not mean the build used them: the signing config has
+      # to be wired into android/app/build.gradle.kts as well (docs/STACK_NOTES.md →
+      # Scaffold). Without it the AAB is debug-signed, Play rejects it for not
+      # matching the upload certificate, and the warning below is suppressed because
+      # the job believed it was signed. Ask the artifact, not the secret.
+      - name: Prove the bundle is really signed
+        if: steps.signing.outputs.signed == 'true'
+        run: |
+          set -euo pipefail
+          certs=$(keytool -printcert -jarfile build/app/outputs/bundle/release/app-release.aab)
+          echo "$certs"
+          if printf '%s' "$certs" | grep -q 'CN=Android Debug'; then
+            echo "::error::The signing secrets are set but the bundle is debug-signed: android/app/build.gradle.kts is not reading android/key.properties (docs/STACK_NOTES.md → Scaffold)."
+            exit 1
+          fi
+
+      # RUN-2: the store listing's data-safety answers depend on the permissions, so
+      # a plugin adding one silently has to fail the release. Checked both ways: a
+      # permission the app needs and lost is as much a bug as one it gained.
+      - name: Check the APK's permissions
+        env:
+          # Read off a real build, not from memory: apt2 dump permissions on the
+          # scaffolded release APK, 21 September 2026, declared nothing but the
+          # generated com.replybox.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION,
+          # which check_permissions.sh drops as the app's own. Empty means "declares
+          # none", never "allow anything" -- notably there is no INTERNET here, which
+          # is what docs/privacy-policy.md promises. Each feature PR that needs a
+          # permission adds it here and updates the privacy policy in the same PR.
+          ALLOWED: ''
+        run: |
+          # The default step shell is `bash -e` with no pipefail, so the previous
+          # `aapt2 ... | tee permissions.txt` reported tee's exit code: a failed dump
+          # left the file empty and the gate passed with nothing in it. The comparison
+          # itself now lives in tool/check_permissions.sh, where it is shellchecked
+          # and covered by tests/test-permission-gate.sh.
+          set -euo pipefail
+          aapt2=$(find "$ANDROID_HOME/build-tools" -name aapt2 -type f | sort -V | tail -n 1)
+          "$aapt2" dump permissions build/app/outputs/flutter-apk/app-release.apk > permissions.txt
+          cat permissions.txt
+          bash tool/check_permissions.sh permissions.txt
+
+      # Nothing is copied to dist/ and nothing is kept: this job's build is a
+      # check, not a deliverable, and a downloadable CI build is one nobody can
+      # install over an existing copy or upload to Play — while looking exactly
+      # like the one that shipped.
+      #
+      # The deobfuscation mapping matters for the same reason it always did —
+      # without it every stack trace in Play Console stays obfuscated — but it
+      # now travels inside the bundle built locally, so there is nothing to
+      # rescue from the runner here.
+      - name: Say where the uploadable artifact comes from
+        if: env.RELEASE == 'true'
+        run: |
+          {
+            echo "### $NAME builds"
+            echo
+            echo "Nothing is published from CI and no tag is pushed. Build it locally and upload it by hand:"
+            echo
+            echo '    flutter build appbundle --release'
+            echo
+            echo "See docs/RELEASING.md."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Say that this merge is not a release
+        if: env.RELEASE != 'true' && github.ref == 'refs/heads/main'
+        run: |
+          {
+            echo "### Not a release: main is still on $NAME"
+            echo
+            echo "This merge left the version alone: a dependency bump, or a PR merged behind another."
+            echo "It was built and checked all the same. Its changes go out with the next version."
+          } >> "$GITHUB_STEP_SUMMARY"

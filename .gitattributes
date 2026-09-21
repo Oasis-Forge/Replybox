@@ -1,0 +1,5 @@
+# Normalise text to LF in the repo whatever each clone's core.autocrlf is set to.
+* text=auto
+# Shell scripts break in bash with Windows line endings, so they stay LF on checkout too.
+# An extensionless shell script (a gradlew-style wrapper) needs its own row here.
+*.sh text eol=lf

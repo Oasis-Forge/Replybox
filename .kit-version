@@ -1,0 +1,42 @@
+﻿# Which app starter kit this project came from, and which files it owns.
+# `new-app.ps1 -Name <this folder> -Update` re-copies the kit files that
+# changed since, so a kit fix reaches a project that was already built.
+kit    = https://github.com/Oasis-Forge/app-starter-kit.git
+commit = ba6741956ad87b4a5ef9ee124bc9583180a98b5b
+stack  = flutter
+files:
+  .claude/agents/build-doctor.md
+  .claude/hooks/format-dart.ps1
+  .claude/settings.json
+  .claude/skills/coverage/SKILL.md
+  .claude/skills/emulator/SKILL.md
+  .claude/skills/handoff/SKILL.md
+  .claude/skills/kickoff/SKILL.md
+  .claude/skills/l10n-add/SKILL.md
+  .claude/skills/release/SKILL.md
+  .claude/skills/ship/SKILL.md
+  .claude/skills/spec/SKILL.md
+  .claude/skills/verify/SKILL.md
+  .gitattributes
+  .github/dependabot.yml
+  .github/pull_request_template.md
+  .github/workflows/ci.yml
+  .github/workflows/claude.yml
+  .github/workflows/release.yml
+  CHANGELOG.md
+  CLAUDE.md
+  docs/_config.yml
+  docs/privacy-policy.md
+  docs/PRODUCT_RULES.md
+  docs/RELEASING.md
+  docs/research/competitor-analysis.md
+  docs/ROADMAP.md
+  docs/STACK_NOTES.md
+  README.md
+  scripts/check_public_docs.sh
+  scripts/rules.sh
+  scripts/version.sh
+  tool/add_messages.dart
+  tool/check_permissions.sh
+  tool/coverage_gaps.dart
+  tool/emu.sh

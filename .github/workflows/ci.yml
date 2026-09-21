@@ -1,0 +1,108 @@
+name: CI
+
+# Android is the only target (docs/ROADMAP.md), so there is one build job and it
+# runs on ubuntu-latest: no macOS minutes, which a private repo bills at 10x.
+# No path filters, so required status checks never hang.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: '3.44.8'
+
+jobs:
+  check:
+    name: Format, analyze, test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Check formatting
+        run: dart format --output=none --set-exit-if-changed lib test
+
+      # The generated lib/l10n/app_localizations*.dart files are committed;
+      # they must match the ARB files (LANG-2).
+      - name: Check generated localizations
+        if: hashFiles('l10n.yaml') != ''
+        run: |
+          flutter gen-l10n
+          git diff --exit-code -- lib/l10n
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test --coverage
+
+      - name: Upload coverage
+        if: always() && hashFiles('coverage/lcov.info') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: coverage/lcov.info
+          retention-days: 7
+
+      # GitHub Pages publishes every file in docs/, on the domain the store listing
+      # points at. This fails when a doc is neither excluded nor declared public.
+      - name: Check what GitHub Pages would publish
+        if: ${{ !cancelled() }}
+        run: bash scripts/check_public_docs.sh
+
+      # The rule IDs are the spine of the method and nothing else checks them. An
+      # ID cited but defined nowhere is a typo or a renumbering, and fails; a rule
+      # nothing cites is reported in the summary without failing, because it may
+      # simply not be built yet.
+      - name: Check the product rules
+        if: ${{ !cancelled() }}
+        run: bash scripts/rules.sh
+
+      # Every merged PR is a release (release.yml), so the version in pubspec.yaml
+      # must be above main's and have a CHANGELOG.md entry.
+      # Dependabot PRs ship with the next release instead.
+      - name: Check version bump
+        if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.user.login != 'dependabot[bot]' }}
+        run: bash scripts/version.sh check
+
+  android:
+    name: Android build (debug)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build APK
+        run: flutter build apk --debug
