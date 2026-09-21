@@ -59,6 +59,6 @@ Before installing a skill or plugin, answer five questions: does it run every se
 
 ## Gotchas
 - If the repo is public: never commit secrets or personal data, and never print secrets in workflows.
-- Store IDs are permanent after the first upload and carry no personal names: `com.replybox.app`.
+- Store IDs are permanent after the first upload and carry no personal names: `com.oasisforge.replybox`.
 - Store listing material (listing text, screenshots and graphics, data-safety answers and the scripts that make them, release notes) lives in `store/`, which is gitignored: one place in the repo, never Downloads.
 - Quote paths in shell commands; project paths may contain spaces.

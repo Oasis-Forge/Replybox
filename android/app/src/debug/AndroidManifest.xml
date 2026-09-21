@@ -33,8 +33,8 @@
             android:name=".spike.SpikeReplyReceiver"
             android:exported="true">
             <intent-filter>
-                <action android:name="com.replybox.app.SPIKE_REPLY"/>
-                <action android:name="com.replybox.app.SPIKE_DISMISS"/>
+                <action android:name="com.oasisforge.replybox.SPIKE_REPLY"/>
+                <action android:name="com.oasisforge.replybox.SPIKE_DISMISS"/>
             </intent-filter>
         </receiver>
     </application>

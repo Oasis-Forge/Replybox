@@ -12,7 +12,7 @@ val keystoreProperties = Properties().apply {
 }
 
 android {
-    namespace = "com.replybox.app"
+    namespace = "com.oasisforge.replybox"
     // Pinned rather than inherited from `flutter.*`. A capture fixture is only
     // comparable against another one taken at the same API level -- notification
     // redaction widened in Android 15 and again in 16 -- so the level the app
@@ -30,7 +30,7 @@ android {
 
     defaultConfig {
         // Permanent after the first Play upload. Do not change it.
-        applicationId = "com.replybox.app"
+        applicationId = "com.oasisforge.replybox"
         // Pinned; see the note on compileSdk above. minSdk 24 is also the floor
         // the product needs: MessagingStyle.extractMessagesFromBundle, which the
         // whole capture path reads, arrived in API 24.
