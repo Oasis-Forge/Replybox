@@ -76,10 +76,12 @@ jobs:
         if: ${{ !cancelled() }}
         run: bash scripts/rules.sh
 
-      # Every merged PR is a release (release.yml), so the version in pubspec.yaml
-      # must be above main's and have a CHANGELOG.md entry.
-      # Dependabot PRs ship with the next release instead.
-      - name: Check version bump
+      # A PR ships a release or it does not; the developer decides. Leaving the
+      # version alone passes. Raising it means release.yml will treat the merge
+      # as a release, so it has to bring a CHANGELOG.md entry and a build number
+      # that moves with it. Lowering it always fails.
+      # Dependabot PRs never bump; they ship with the next release.
+      - name: Check the version, if this PR moves it
         if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.user.login != 'dependabot[bot]' }}
         run: bash scripts/version.sh check
 

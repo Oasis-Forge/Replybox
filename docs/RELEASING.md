@@ -1,8 +1,8 @@
 # Releasing
 
-Every PR merged to `main` is a release. The app version is the source of truth: `x.y.z` follows [Semantic Versioning](https://semver.org) (major for breaking changes, minor for new features, patch for fixes and everything else). Mobile stores also need a build number `N` (`x.y.z+N`) that grows by one with every release. `bash scripts/version.sh name` and `build` read them.
+A PR merged to `main` is a release only if it raises the version; leaving it alone is normal, and the PR merges without one. The app version is the source of truth: `x.y.z` follows [Semantic Versioning](https://semver.org) (major for breaking changes, minor for new features, patch for fixes and everything else). Mobile stores also need a build number `N` (`x.y.z+N`) that grows by one with every release. `bash scripts/version.sh name` and `build` read them.
 
-1. **Before merging**, bump the version on the branch with `/release [major|minor|patch]`, or by hand: edit the version and add a `## [x.y.z] - YYYY-MM-DD` entry to `CHANGELOG.md`. CI fails if the version isn't above the one on `main` or has no changelog entry. Dependabot PRs are exempt and ship with the next release.
+1. **Before merging, decide whether this PR is a release.** A documentation fix, a refactor, or a test-only change usually isn't — leave the version alone and CI passes; the changes ship with whichever PR releases next. To make this PR the release, bump the version on the branch with `/release [major|minor|patch]`, or by hand: edit the version and add a `## [x.y.z] - YYYY-MM-DD` entry to `CHANGELOG.md`. CI then requires the version to be above the one on `main`, a build number that moved the same way, and the changelog entry. Dependabot PRs are exempt and ship with the next release.
 2. **On merge**, `release.yml` builds the release artifacts as a check, runs whatever gates the stack has, and says in its summary whether the merge was a release — a Dependabot merge is not, by design. It publishes nothing and tags nothing.
 
 Any other platform's release workflow is run by hand from the Actions tab, or with `gh workflow run <workflow>.yml --ref main`.
@@ -16,7 +16,7 @@ A CI build is unsigned or debug-signed unless the signing secrets are set, so an
 What that means in practice:
 
 - **`release.yml` still builds**, because that proves the release build compiles somewhere other than the developer's machine, and it is where the release-manifest and permission gates run. Its build is a check, not a deliverable.
-- **No tag is pushed either.** `scripts/version.sh check` compares a PR against the version on `origin/main` instead. On main — the merge build — `scripts/version.sh released` compares the merge with the commit before it and reports whether it was a release. A merge that left the version alone (a Dependabot PR, or one merged behind another that took the same version) is built and checked all the same; the summary says it is not a release, and its changes go out with the next version. The job needs `fetch-depth: 2` for it.
+- **No tag is pushed either.** `scripts/version.sh check` compares a PR against the version on `origin/main` instead. On main — the merge build — `scripts/version.sh released` compares the merge with the commit before it and reports whether it was a release. A merge that left the version alone — most PRs, by the developer's choice, plus every Dependabot PR and one merged behind another that took the same version — is built and checked all the same; the summary says it is not a release, and its changes go out with the next version. The job needs `fetch-depth: 2` for it.
 - **The record of a version is its `CHANGELOG.md` entry** and the commit that raised it, not a tag or a release page.
 - **Signing is local.** Keep the keystore and `key.properties` in the project, both gitignored. The store-credential secrets below become unnecessary; set them only if a CI-built artifact ever has to be uploadable.
 - **Check the signer before every upload.** The fall back to a debug key is silent, and a store rejects the upload rather than explaining it.
@@ -27,7 +27,7 @@ A store-publishing service account is not created at all.
 
 ## When a release is bad
 
-Every merged PR is a release, so there will be a bad one. Decide none of this while it is happening.
+Releases happen often enough that one will eventually be bad. Decide none of this while it is happening.
 
 1. **Stop the spread first.** In Play Console, halt the rollout on the track it is on. A version code that has been published can never be reused or re-uploaded, and an app cannot be rolled back to an earlier release: the only way out is a higher version going out.
 2. **Fix forward, never backward.** `git revert` the merge and open a PR, and CI refuses it — the reverted tree's version is at or below main's, which is exactly what `scripts/version.sh check` exists to catch. That is a stuck pipeline during the one hour it matters. If the fix *is* a revert, revert on a branch off a freshly pulled `main` **and** run `/release patch` on it, so the undo is itself a release with its own version and changelog entry.
