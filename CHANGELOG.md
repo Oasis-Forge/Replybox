@@ -4,6 +4,23 @@ Notable changes per release, written for users. Versions follow [Semantic Versio
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-21
+
+### Added
+- A throwaway notification-capture spike, debug builds only, that records what
+  the phone's notifications actually contain. It answers three of the five
+  questions the product depends on and writes the results to
+  `docs/research/spike.md`. Nothing user-facing changed.
+
+### Changed
+- The Android SDK levels the app compiles and targets are now written down
+  rather than inherited from whatever Flutter is installed.
+
+### Fixed
+- The release check that keeps unwanted permissions out of the app was rejecting
+  a clean build. It had never run before, because it only runs when a release
+  raises the version and none had.
+
 ## [0.1.0] - 2026-09-21
 
 ### Added

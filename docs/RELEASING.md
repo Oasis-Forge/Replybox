@@ -66,7 +66,7 @@ Check it with `gh api repos/Oasis-Forge/Replybox/rulesets`. The classic branch-p
 - **Secrets stay safe:** GitHub masks secret values in logs, and the workflows never print them. CI uses `pull_request`, not `pull_request_target`, so PRs from forks run without secrets. `claude.yml` runs only for `haskalach` -- `github.actor` is a person, not the `Oasis-Forge` organisation that owns the repo.
 - **Nothing downloadable is produced**, so a public repo exposes no build at all: `release.yml` creates no GitHub Release and uploads no artifact.
 - **Fork PRs:** Settings → Actions → General → "Approval for running fork pull request workflows" → "Require approval for all external contributors".
-- **Commit emails are public.** Use the noreply address from GitHub → Settings → Emails: `git config user.email "<id>+haskalach@users.noreply.github.com"`.
+- **Commit emails are public.** This repo commits under the Oasis Forge support address: `git config user.email "oasisforge.support@gmail.com"`.
 - **License:** with no `LICENSE` file the code is "all rights reserved". Worth deciding deliberately here: a readable repo is one of the few ways "nothing leaves your phone" can be checked rather than believed (`docs/PLAN.md` section 2).
 - A public repo gets free GitHub-hosted runners. CI uses ubuntu-latest only, so a private repo costs the same.
 
