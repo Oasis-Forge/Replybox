@@ -138,7 +138,7 @@ jobs:
       # permission the app needs and lost is as much a bug as one it gained.
       - name: Check the APK's permissions
         env:
-          # Read off a real build, not from memory: apt2 dump permissions on the
+          # Read off a real build, not from memory: an aapt2 permissions dump of the
           # scaffolded release APK, 21 September 2026, declared nothing but the
           # generated com.replybox.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION,
           # which check_permissions.sh drops as the app's own. Empty means "declares
