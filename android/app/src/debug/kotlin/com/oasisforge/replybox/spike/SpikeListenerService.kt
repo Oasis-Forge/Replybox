@@ -1,4 +1,4 @@
-package com.replybox.app.spike
+package com.oasisforge.replybox.spike
 
 import android.app.Notification
 import android.app.RemoteInput

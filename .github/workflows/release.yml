@@ -26,7 +26,7 @@ concurrency:
 
 env:
   FLUTTER_VERSION: '3.44.8'
-  PACKAGE_NAME: 'com.replybox.app'
+  PACKAGE_NAME: 'com.oasisforge.replybox'
 
 jobs:
   version:
@@ -140,7 +140,7 @@ jobs:
         env:
           # Read off a real build, not from memory: an aapt2 permissions dump of the
           # scaffolded release APK, 21 September 2026, declared nothing but the
-          # generated com.replybox.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION,
+          # generated com.oasisforge.replybox.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION,
           # which check_permissions.sh drops as the app's own. Empty means "declares
           # none", never "allow anything" -- notably there is no INTERNET here, which
           # is what docs/privacy-policy.md promises. Each feature PR that needs a
@@ -148,11 +148,11 @@ jobs:
           ALLOWED: ''
           # Without this the "drops it as the app's own" above is not true: the
           # filter in check_permissions.sh is conditional on PACKAGE_NAME, so an
-          # unset one keeps com.replybox.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
+          # unset one keeps com.oasisforge.replybox.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
           # in the declared list and the gate fails on a clean build. It never
           # showed because this job only runs when a commit raises the version,
           # and no commit had until this one.
-          PACKAGE_NAME: com.replybox.app
+          PACKAGE_NAME: com.oasisforge.replybox
         run: |
           # The default step shell is `bash -e` with no pipefail, so the previous
           # `aapt2 ... | tee permissions.txt` reported tee's exit code: a failed dump

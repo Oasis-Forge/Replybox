@@ -1,4 +1,4 @@
-package com.replybox.app.spike
+package com.oasisforge.replybox.spike
 
 import android.app.PendingIntent
 import android.app.RemoteInput
@@ -14,8 +14,8 @@ import org.json.JSONObject
  * action's PendingIntent after the user has dismissed the notification it came
  * from, and for how long. Debug source set only, with the rest of the spike.
  *
- *   adb shell am broadcast -a com.replybox.app.SPIKE_REPLY \
- *     -n com.replybox.app/.spike.SpikeReplyReceiver \
+ *   adb shell am broadcast -a com.oasisforge.replybox.SPIKE_REPLY \
+ *     -n com.oasisforge.replybox/.spike.SpikeReplyReceiver \
  *     --es key '<notification key>' --es text 'a reply'
  *
  * The outcome is written into the same dump as the notifications, so one file
@@ -28,7 +28,7 @@ class SpikeReplyReceiver : BroadcastReceiver() {
         // notification away does, and `adb shell service call notification` is
         // not: it left the notification listed and made the first check-5 run
         // look like a pass when nothing had been dismissed.
-        if (intent.action == "com.replybox.app.SPIKE_DISMISS") {
+        if (intent.action == "com.oasisforge.replybox.SPIKE_DISMISS") {
             val service = SpikeListenerService.instance
             service?.cancelAllNotifications()
             SpikeListenerService.appendFrom(

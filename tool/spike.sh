@@ -25,7 +25,7 @@
 set -euo pipefail
 export MSYS_NO_PATHCONV=1 # stops Git Bash rewriting /sdcard into a Windows path
 
-APP_ID=com.replybox.app
+APP_ID=com.oasisforge.replybox
 SERVICE="$APP_ID/$APP_ID.spike.SpikeListenerService"
 DUMP_ON_DEVICE="/sdcard/Android/data/$APP_ID/files/spike-dump.jsonl"
 APK=build/app/outputs/flutter-apk/app-debug.apk
@@ -129,7 +129,7 @@ case "${1:-}" in
     # Goes through the listener's own cancelAllNotifications, which is what a
     # user clearing the shade does. `service call notification 1` looked like it
     # worked and did nothing.
-    adb shell "am broadcast -a com.replybox.app.SPIKE_DISMISS \
+    adb shell "am broadcast -a com.oasisforge.replybox.SPIKE_DISMISS \
       -n $APP_ID/$APP_ID.spike.SpikeReplyReceiver" >/dev/null
     sleep 1
     left=$(adb shell cmd notification list 2>/dev/null | grep -c . || true)
@@ -139,7 +139,7 @@ case "${1:-}" in
     # Check 5. With no key it replies to the last action the listener saw, which
     # after a `dismiss` is the one whose notification no longer exists.
     text=${3:-a reply sent after the notification was dismissed}
-    adb shell "am broadcast -a com.replybox.app.SPIKE_REPLY \
+    adb shell "am broadcast -a com.oasisforge.replybox.SPIKE_REPLY \
       -n $APP_ID/$APP_ID.spike.SpikeReplyReceiver \
       ${2:+--es key '$2'} --es text '$text'" | tail -2
     ;;

@@ -4,6 +4,13 @@ Notable changes per release, written for users. Versions follow [Semantic Versio
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-09-21
+
+### Changed
+- The app's identifier is now `com.oasisforge.replybox`. It can only be set
+  once, when the app is first published, so it was worth getting right while
+  changing it still cost nothing.
+
 ## [0.1.2] - 2026-09-21
 
 ### Added
