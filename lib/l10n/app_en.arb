@@ -1,0 +1,23 @@
+{
+  "@@locale": "en",
+  "appTitle": "Replybox",
+  "@appTitle": {
+    "description": "The application's title."
+  },
+  "inboxEmptyNothingYet": "Nothing yet. Messages from the apps you've included will appear here.",
+  "@inboxEmptyNothingYet": {
+    "description": "Inbox empty state shown when access is granted and nothing has arrived yet (INB-15, RUN-1)."
+  },
+  "conversationUnnamed": "This conversation arrived without a name",
+  "@conversationUnnamed": {
+    "description": "Shown on a conversation row whose notification arrived without a name (INB-2)."
+  },
+  "messageHidden": "Your phone hid this message. Open it in the app it came from.",
+  "@messageHidden": {
+    "description": "Shown in place of a message Android hid from the app (CAP-8, INB-3)."
+  },
+  "openInApp": "Open in app",
+  "@openInApp": {
+    "description": "Action on a row with no live reply action (INB-13, CAP-14)."
+  }
+}
