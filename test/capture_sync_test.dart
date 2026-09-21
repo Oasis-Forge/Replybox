@@ -400,9 +400,11 @@ void main() {
         'are we still on for eight',
       ]);
       expect(listener.ackedRows.last, <String>['r5', 'r6', 'r7']);
-      expect(listener.queue.map((QueuedCaptureEvent r) => r.rowId), <String>[
-        'r3',
-      ], reason: 'the row that still fails is still not acked');
+      expect(
+        listener.queue.map((QueuedCaptureEvent r) => r.rowId),
+        <String>['r3'],
+        reason: 'the row that still fails is still not acked',
+      );
     });
 
     test('the row that failed lands on the pass after the fault clears, and '
