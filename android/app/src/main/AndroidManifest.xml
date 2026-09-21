@@ -2,7 +2,13 @@
     <application
         android:label="replybox"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="false">
+        <!-- CAP-24: Android's automatic cloud backup is on by default and would
+             upload the message database to the user's Google Drive, which would
+             make the privacy policy's "everything stays on your phone" untrue. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -41,5 +47,14 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <!-- INB-16, INB-20: the shipped messaging apps. These are what let the
+             app resolve the label and icon of an app it captures from. This
+             list must stay in step with lib/data/shipped_apps.dart. -->
+        <package android:name="com.whatsapp" />
+        <package android:name="com.facebook.orca" />
+        <package android:name="com.instagram.android" />
+        <package android:name="org.telegram.messenger" />
+        <package android:name="org.thoughtcrime.securesms" />
+        <package android:name="com.google.android.apps.messaging" />
     </queries>
 </manifest>

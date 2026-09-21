@@ -4,6 +4,18 @@ Notable changes per release, written for users. Versions follow [Semantic Versio
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-21
+
+### Added
+- The groundwork the app is built on: where messages will be stored, how that
+  storage changes safely when the app updates, and the plumbing that lets every
+  screen be tested without a phone. The app now starts, in your language, and
+  says it has nothing yet — which is true, and the first honest thing it has
+  ever said.
+- Replybox will not be included in Android's automatic cloud backup. Your
+  messages are not copied to Google Drive, and the only backup that exists is
+  one you ask for.
+
 ## [0.1.4] - 2026-09-21
 
 ### Added

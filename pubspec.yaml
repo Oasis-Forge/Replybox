@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 0.1.4+5
+version: 0.2.0+6
 
 environment:
   sdk: ^3.12.2
@@ -35,9 +35,35 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
 
+  # State: provider + ChangeNotifier, and only this one (docs/STACK_NOTES.md).
+  provider: ^6.1.2
+
+  # Storage: sqflite, with ordered migration steps owned by lib/db/db_helper.dart.
+  sqflite: ^2.4.1
+  path: ^1.9.0
+
+  # REC-2: every record ID is a UUID v4, so rows from a backup or another
+  # device never collide.
+  uuid: ^4.5.1
+
+  # CAP-5 stores a hash of a message's text to match it across notification
+  # keys without keeping a second copy of the text.
+  crypto: ^3.0.6
+
+  # Localisation from the first screen, so no string is ever born hardcoded
+  # (LANG-2). There is one language today and the scaffolding is here anyway,
+  # because retrofitting it means touching every widget again.
+  intl: any
+  flutter_localizations:
+    sdk: flutter
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
+
+  # Database tests run a real SQLite in memory, so a migration step is exercised
+  # by the engine that will run it rather than by a mock.
+  sqflite_common_ffi: ^2.3.4
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
@@ -56,6 +82,11 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  # Generates AppLocalizations from lib/l10n/*.arb. The generated files are
+  # committed and CI re-runs gen-l10n and diffs them, so a stale generation
+  # cannot merge.
+  generate: true
 
   # To add assets to your application, add an assets section, like this:
   # assets:
