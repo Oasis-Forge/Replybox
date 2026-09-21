@@ -3,10 +3,13 @@
 #
 #   scripts/version.sh name      print x.y.z
 #   scripts/version.sh build     print the build number N (0 when there is none)
-#   scripts/version.sh check     fail unless the version is above the base branch's
-#                                and CHANGELOG.md has a "## [x.y.z] - YYYY-MM-DD" entry.
-#                                On the base branch itself there is no PR to gate, so
-#                                it reports whether this commit is a release instead
+#   scripts/version.sh check     a PR may ship a release or not, as the developer
+#                                decides. Leaving the version alone passes. Raising
+#                                it requires a "## [x.y.z] - YYYY-MM-DD" entry in
+#                                CHANGELOG.md, and a build number that moves with it.
+#                                Lowering it always fails. On the base branch itself
+#                                there is no PR to gate, so it reports whether this
+#                                commit is a release instead
 #   scripts/version.sh released  print true when this commit raised the version above
 #                                the previous commit's, else false: whether a merge to
 #                                the base branch is a release (the merge build)
@@ -172,15 +175,28 @@ case "${1:-}" in
       last_build=${last_build:-0}
     fi
 
+    # A PR may ship a release or not; the developer decides. A documentation
+    # fix, a refactor or a test-only change has nothing to tell users about,
+    # and forcing a version on it inflates the number until it stops meaning
+    # anything. What is still gated is a version that moves: it has to move
+    # upward, and it has to bring its CHANGELOG entry.
+    if [ -n "$last_name" ] && [ "$name" = "$last_name" ]; then
+      if [ "$build" != 0 ] && [ "$build" -ne "$last_build" ]; then
+        fail "the version is unchanged at $name but the build number moved from $last_build to $build: move both or neither"
+      fi
+      echo "Not a release: this PR leaves $base_branch on $name."
+      exit 0
+    fi
+
     if [ -n "$last_name" ]; then
       if ! above "$name" "$last_name"; then
-        fail "$base_branch was already on $last_name: raise the version above it (major, minor, or patch)"
+        fail "$base_branch is on $last_name and this PR sets $name: a version may rise or stay put, never fall"
       fi
       if [ "$build" != 0 ] && [ "$build" -le "$last_build" ]; then
         fail "$base_branch was already on build $last_build: raise the build number above it"
       fi
     fi
-    changelog_entry "$name" > /dev/null || fail "CHANGELOG.md needs a '## [$name] - YYYY-MM-DD' entry"
+    changelog_entry "$name" > /dev/null || fail "this PR raises the version to $name, so CHANGELOG.md needs a '## [$name] - YYYY-MM-DD' entry"
     echo "Releasing $name+$build (was ${last_name:-nothing yet})."
     ;;
   *) usage ;;

@@ -8,7 +8,9 @@
 <!-- Items ticked in docs/ROADMAP.md. -->
 
 ## Release
-Version `x.y.z` (major / minor / patch), with its `CHANGELOG.md` entry.
+<!-- Either: Version `x.y.z` (major / minor / patch), with its `CHANGELOG.md` entry.
+     Or: Not a release — the version is unchanged, and why. Both are normal. -->
+
 
 ## Checked
 - [ ] `/verify` passes; coverage of the changed files reviewed and gaps tested
