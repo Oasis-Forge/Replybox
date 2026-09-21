@@ -4,4 +4,38 @@
          to allow setting breakpoints, to provide hot reload, etc.
     -->
     <uses-permission android:name="android.permission.INTERNET"/>
+
+    <application>
+        <!-- Capture spike for docs/PLAN.md section 5, and throwaway with it.
+             It lives in the debug source set so no part of it can reach a
+             release build: the spike is scaffolding for deciding the capture
+             rules, not a shipped feature, and release.yml's permission gate
+             should never have to reason about it.
+
+             BIND_NOTIFICATION_LISTENER_SERVICE is declared here as the
+             permission the *system* must hold to bind this service, which is
+             what makes the service safe to export. It is not a uses-permission
+             and so does not appear in the app's permission list either way. -->
+        <service
+            android:name=".spike.SpikeListenerService"
+            android:exported="true"
+            android:label="Replybox capture spike"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService"/>
+            </intent-filter>
+        </service>
+
+        <!-- Check 5: fires a reply action that was held after its notification
+             was dismissed. Exported so `adb shell am broadcast` can reach it;
+             debug-only, so nothing exported here exists in a release build. -->
+        <receiver
+            android:name=".spike.SpikeReplyReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.replybox.app.SPIKE_REPLY"/>
+                <action android:name="com.replybox.app.SPIKE_DISMISS"/>
+            </intent-filter>
+        </receiver>
+    </application>
 </manifest>

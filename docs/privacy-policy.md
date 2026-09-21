@@ -46,14 +46,10 @@ Changes are published on this page with a new effective date.
 
 ## Who publishes the app
 
-<!-- The publisher name exactly as it appears in the store listing, never a personal
-name (`docs/RELEASING.md` → Payments profile). A reviewer looks for this. -->
+Oasis Forge publishes the app. That's the name on the store listing.
 
 ## Contact
 
-<!-- The dedicated support address from the store listing. Play publishes it on the
-listing and the developer's email on every app, so withholding it here buys no
-privacy it hasn't already spent -- it just leaves the policy without the contact a
-store reviewer expects. -->
+Email oasisforge.support@gmail.com for support or privacy questions.
 
 You can also open an issue at https://github.com/Oasis-Forge/Replybox/issues.

@@ -2,6 +2,8 @@
 
 One inbox for every message that reaches your phone, answerable in place, with nothing leaving the device.
 
+**Status:** v0.1.0, early development — no features implemented yet. Android only; everything stays on the device.
+
 **Principles:** 1. Nothing leaves the phone: no account, no server, no analytics, no internet permission in the release build. 2. Free is complete: inbox, reply, waiting list and search never move behind a payment. 3. Honest about limits: the app says what it cannot see. 4. Never hides or answers another app's notification unless the user asked. 5. Two taps to reply or clear.
 
 ## Getting started

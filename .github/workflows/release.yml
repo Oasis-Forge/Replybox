@@ -146,12 +146,18 @@ jobs:
           # is what docs/privacy-policy.md promises. Each feature PR that needs a
           # permission adds it here and updates the privacy policy in the same PR.
           ALLOWED: ''
+          # Without this the "drops it as the app's own" above is not true: the
+          # filter in check_permissions.sh is conditional on PACKAGE_NAME, so an
+          # unset one keeps com.replybox.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
+          # in the declared list and the gate fails on a clean build. It never
+          # showed because this job only runs when a commit raises the version,
+          # and no commit had until this one.
+          PACKAGE_NAME: com.replybox.app
         run: |
           # The default step shell is `bash -e` with no pipefail, so the previous
           # `aapt2 ... | tee permissions.txt` reported tee's exit code: a failed dump
           # left the file empty and the gate passed with nothing in it. The comparison
-          # itself now lives in tool/check_permissions.sh, where it is shellchecked
-          # and covered by tests/test-permission-gate.sh.
+          # itself now lives in tool/check_permissions.sh.
           set -euo pipefail
           aapt2=$(find "$ANDROID_HOME/build-tools" -name aapt2 -type f | sort -V | tail -n 1)
           "$aapt2" dump permissions build/app/outputs/flutter-apk/app-release.apk > permissions.txt

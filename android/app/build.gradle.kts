@@ -13,7 +13,14 @@ val keystoreProperties = Properties().apply {
 
 android {
     namespace = "com.replybox.app"
-    compileSdk = flutter.compileSdkVersion
+    // Pinned rather than inherited from `flutter.*`. A capture fixture is only
+    // comparable against another one taken at the same API level -- notification
+    // redaction widened in Android 15 and again in 16 -- so the level the app
+    // builds and targets has to be a number in this file, not whatever the
+    // installed Flutter happens to default to. These are Flutter 3.44.8's own
+    // defaults as of 21 September 2026; raising them is a deliberate change with
+    // a spike dump to back it up.
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -24,10 +31,11 @@ android {
     defaultConfig {
         // Permanent after the first Play upload. Do not change it.
         applicationId = "com.replybox.app"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        // Pinned; see the note on compileSdk above. minSdk 24 is also the floor
+        // the product needs: MessagingStyle.extractMessagesFromBundle, which the
+        // whole capture path reads, arrived in API 24.
+        minSdk = 24
+        targetSdk = 36
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
