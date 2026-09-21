@@ -4,6 +4,15 @@ Notable changes per release, written for users. Versions follow [Semantic Versio
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-09-21
+
+### Added
+- The rules for the inbox itself and for asking permission: what a row shows
+  and how the list sorts, what the app says when there is nothing to show yet,
+  what it tells you before sending you to Android's settings page, and what it
+  does when it cannot tell whether it is still working. Nothing user-facing
+  changed yet — this is the behaviour the next releases are built to.
+
 ## [0.1.3] - 2026-09-21
 
 ### Changed
