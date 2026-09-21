@@ -85,6 +85,24 @@ jobs:
         if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.user.login != 'dependabot[bot]' }}
         run: bash scripts/version.sh check
 
+  # The Android job, and the Kotlin half of capture rides inside it.
+  #
+  # `flutter test` never compiles or runs a line of Kotlin, so without these tests
+  # CAP-1's fail-closed store and CAP-15's 30-day queue sweep -- both of which
+  # docs/privacy-policy.md makes a claim about -- ship on nothing but review.
+  #
+  # They used to be a job of their own, on the reasoning that a ruleset can require
+  # a job and cannot require a step. True, and beside the point: the `main` ruleset
+  # requires exactly `Format, analyze, test` and `Android build (debug)`, so a job
+  # named anything else was never required and every Kotlin test could go red with
+  # the pull request still mergeable. A gate that needs a GitHub setting changed
+  # before it gates anything is not a gate. Folded in here it is required today, by
+  # a check that is already on the list.
+  #
+  # `name:` is therefore load-bearing and must stay byte for byte `Android build
+  # (debug)`: the ruleset matches the check by that string, and renaming the job to
+  # mention the tests would leave the required check waiting for a name nothing
+  # reports (docs/ROADMAP.md, Phase 0, the ruleset item).
   android:
     name: Android build (debug)
     runs-on: ubuntu-latest
@@ -106,5 +124,24 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      # android/gradlew and local.properties are both gitignored -- the wrapper
+      # script because Flutter injects it, local.properties because it holds
+      # absolute paths -- so neither exists after a checkout, and
+      # settings.gradle.kts reads flutter.sdk out of local.properties before it can
+      # configure anything. --config-only writes both and returns without
+      # assembling an artifact, so the unit tests below can run before the build.
+      - name: Generate the Gradle config
+        run: flutter build apk --debug --config-only
+
+      # JVM tests only: CaptureQueue and CaptureStore touch java.io.File and
+      # org.json and no framework class, so there is no emulator and no Robolectric.
+      # Before the APK build, so a broken rule is reported in a minute rather than
+      # after a full build.
+      - name: Kotlin unit tests
+        run: ./android/gradlew -p android :app:testDebugUnitTest
+
+      # `!cancelled()`, so a red Kotlin test does not hide a build that is also
+      # broken: one run reports both.
       - name: Build APK
+        if: ${{ !cancelled() }}
         run: flutter build apk --debug

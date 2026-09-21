@@ -25,6 +25,40 @@ class NoopNotificationSource implements NotificationSource {
       const Stream<Map<String, Object?>>.empty();
 }
 
+/// Accepts the set and forgets it, which is what a phone with no listener does
+/// with it (INB-22). It records the last set it was handed so a test can assert
+/// that a switch pushed CAP-1's filter down rather than only writing the row —
+/// the defect this interface exists to make impossible.
+class NoopCaptureFilter implements CaptureFilter {
+  NoopCaptureFilter();
+
+  /// Null until something pushes. An empty list is a real value — every app
+  /// off — and is not the same as never having been told.
+  List<String>? get lastPushed => _lastPushed;
+  List<String>? _lastPushed;
+
+  /// The `known` half of the same push: every package the database had a row
+  /// for. Kept because it is the half that decides whether a package the user
+  /// turned off actually goes off on the phone (CAP-1, INB-22), so a test that
+  /// only asserted [lastPushed] would pass over the defect this argument fixes.
+  List<String>? get lastPushedKnown => _lastPushedKnown;
+  List<String>? _lastPushedKnown;
+
+  /// How many times a set was pushed, so a test can tell one push from two.
+  int get pushes => _pushes;
+  int _pushes = 0;
+
+  @override
+  Future<void> setEnabledPackages(
+    List<String> packages,
+    List<String> known,
+  ) async {
+    _lastPushed = List<String>.unmodifiable(packages);
+    _lastPushedKnown = List<String>.unmodifiable(known);
+    _pushes += 1;
+  }
+}
+
 class NoopReplyService implements ReplyService {
   const NoopReplyService();
 
@@ -85,11 +119,16 @@ class NoopAppLock implements AppLock {
 }
 
 /// The whole bag, no-op. What every test gets unless it swaps one out.
-DeviceServices noopServices() => const DeviceServices(
-  notifications: NoopNotificationSource(),
-  reply: NoopReplyService(),
-  launcher: NoopAppLauncher(),
-  reminders: NoopReminderScheduler(),
-  entitlements: NoopEntitlements(),
-  appLock: NoopAppLock(),
+///
+/// No longer `const`: [NoopCaptureFilter] remembers what it was pushed, so each
+/// call has to hand back its own. Reach the filter through
+/// `services.captureFilter as NoopCaptureFilter` to assert on it.
+DeviceServices noopServices() => DeviceServices(
+  notifications: const NoopNotificationSource(),
+  captureFilter: NoopCaptureFilter(),
+  reply: const NoopReplyService(),
+  launcher: const NoopAppLauncher(),
+  reminders: const NoopReminderScheduler(),
+  entitlements: const NoopEntitlements(),
+  appLock: const NoopAppLock(),
 );

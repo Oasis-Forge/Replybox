@@ -41,6 +41,55 @@ void main() {
       expect(after.direction, Direction.outbound);
       expect(after.sentAt, before.sentAt);
       expect(after.historyIndex, before.historyIndex);
+      expect(after.timeSource, TimeSource.entry);
+    });
+
+    test('a message whose direction could not be decided survives toMap and '
+        'back (INB-9)', () {
+      // The state INB-9 names has to be storable, or capture has to guess one
+      // of the other two — which is how the user's own messages ended up in
+      // their own unread badge.
+      final Message before = aMessage(
+        conversationId: 'c1',
+        text: 'who wrote this',
+        direction: Direction.unknown,
+      ).copyWith();
+      final Message after = Message.fromMap(before.toMap());
+
+      expect(after.direction, Direction.unknown);
+    });
+
+    test('a message whose time came from the notification says so (CAP-5)', () {
+      final Message before = Message(
+        id: 'm1',
+        conversationId: 'c1',
+        sender: '',
+        sentAt: t0,
+        timeSource: TimeSource.post,
+        kind: MessageKind.hidden,
+        direction: Direction.inbound,
+        sendState: SendState.sent,
+        notificationKey: 'notif-1',
+        historyIndex: 0,
+        createdAt: t0,
+        updatedAt: t0,
+      );
+      final Message after = Message.fromMap(before.toMap());
+
+      expect(after.timeSource, TimeSource.post);
+      // And it survives a copyWith, which is what a send-state change is.
+      expect(
+        after.copyWith(sendState: SendState.failed).timeSource,
+        TimeSource.post,
+      );
+    });
+
+    test('a direction the column cannot be read as is unknown, never inbound '
+        '(INB-9, INB-5)', () {
+      // Defaulting to inbound would put a row in somebody's unread badge on the
+      // strength of a failed parse.
+      expect(Direction.fromDb('sideways'), Direction.unknown);
+      expect(Direction.fromDb(null), Direction.unknown);
     });
 
     test('an app survives toMap and back', () {

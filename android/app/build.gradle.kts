@@ -61,6 +61,55 @@ android {
             }
         }
     }
+
+    testOptions {
+        unitTests {
+            // android.jar on the unit-test classpath is a stub whose every method
+            // throws "not mocked". CaptureStore and CaptureQueue reach android.util.Log
+            // from inside the catch blocks that are the whole point of the fail-closed
+            // tests (CAP-1) -- so a throwing Log would turn the path under test into an
+            // exception before the assertion. Returning defaults leaves those paths
+            // running and asserts what they do, not what the stub does.
+            //
+            // It does NOT make framework classes usable: a Bundle still answers null to
+            // everything, which is why NotificationProjection.project is not exercised
+            // here (see NotificationProjectionTest).
+            isReturnDefaultValues = true
+        }
+    }
+}
+
+// A green run that ran nothing looks exactly like a green run that ran everything,
+// and this task is the only thing that exercises CAP-1's native filter and CAP-15's
+// prune at all. So every test names itself in the log and CI's own output is the
+// evidence, rather than an HTML report nobody opens.
+tasks.withType<Test>().configureEach {
+    testLogging {
+        events("passed", "skipped", "failed")
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        showStackTraces = true
+    }
+}
+
+dependencies {
+    testImplementation(kotlin("test"))
+    // The real org.json, ahead of the stub android.jar on the test classpath.
+    // CaptureQueue's line-per-row format and CaptureStore's file are both org.json
+    // end to end (CAP-15), and a stubbed JSONObject that answers null would make
+    // every one of those assertions pass for the wrong reason. AGP appends the
+    // mockable android.jar last, so this artifact is what the tests link against.
+    //
+    // It is the *reference* implementation, not Android's, and the two differ in
+    // one way that has already cost a privacy leak: Android's
+    // `JSONTokener.toString()` is `" at character " + pos + " of " + in`, so a
+    // JSONException there carries the entire string it failed to parse, while this
+    // one carries only the class and position. A test that inspected a parse
+    // failure here would therefore see none of the content that reaches logcat on a
+    // device. Nothing about that can be fixed on the classpath, so INB-24 is held
+    // structurally instead: CaptureLogTest asserts the capture package makes one
+    // android.util.Log call in total and that it is fed a String with no throwable
+    // in it. Read that file before changing this line.
+    testImplementation("org.json:json:20240303")
 }
 
 kotlin {

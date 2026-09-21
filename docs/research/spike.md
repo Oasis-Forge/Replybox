@@ -61,7 +61,9 @@ A one-time-code SMS reached the listener with its content replaced by `"Sensitiv
 
 Two findings worth more than the pass itself:
 
-- **It could not be turned off.** `cmd notification redact_otp_from_untrusted_listeners false`, then revoking and re-granting notification access so the listener rebound, still produced a redacted message. Treat redaction as a permanent condition of being a third-party listener on this API level, not a setting a user can waive.
+- **It could not be turned off.** Redaction fired on every attempt to be rid of it, including after revoking and re-granting notification access so the listener rebound. Treat redaction as a permanent condition of being a third-party listener on this API level, not a setting a user can waive.
+
+  **Correction, 21 September 2026.** An earlier version of this bullet said the toggle was set to `false` first — `cmd notification redact_otp_from_untrusted_listeners false` — and that a redacted message came through anyway. The device drill of the same date found that command now fails from the shell with `Package android does not belong to 2000`, so it sets nothing and almost certainly set nothing then either. What is actually true is smaller and enough: OTP redaction is **on by default** at API 37 and was never observed off. The bullet's conclusion is unchanged; only its evidence is. `tool/spike.sh` still runs the dead `redact` step, and it is listed under Known bugs in `docs/ROADMAP.md`.
 - **It does not reproduce with `cmd notification post`.** Shell-posted notifications came through unredacted with the toggle on, with a device PIN set, every time. The redaction is applied by the system's classifier to real app notifications, and the shell is exempt. **A redaction fixture cannot be manufactured from the shell — it needs a real app.**
 
 ### 5. Reply after dismissal — pass
@@ -70,7 +72,22 @@ The listener held the `Reply` action from an incoming SMS, then cancelled every 
 
 So a reply survives the notification being dismissed. What it does not survive is process death: the action map is in memory because a `PendingIntent` cannot be serialised. That is the real boundary for the REP rules — "reply available" means "held in this process", and after a restart the answer is "open in app".
 
-Removal reasons came through correctly and are now mapped to names in the dump: `LISTENER_CANCEL_ALL` and `APP_CANCEL` were both observed.
+Removal reasons came through correctly and are now mapped to names in the dump: `LISTENER_CANCEL_ALL` and `APP_CANCEL` were both observed. `LISTENER_CANCEL_ALL` here is the listener cancelling notifications itself — not the shade's **Clear all**, which the device drill below recorded as `CANCEL_ALL`.
+
+## What the device drill of 21 September 2026 settled
+
+The spike above was a throwaway listener in the debug source set. On the same date, after the capture code was written, the **shipped** listener was driven by hand on `emulator-5554` (Android 17, API 37) and its hand-over queue pulled off the device — the dump is `spike-dumps/2026-09-21-shipped-projection.jsonl`, and its README says which projection wrote which file. Four things the spike left open now have evidence, and one of them is new.
+
+- **The phone owner's own line, from a real app.** Replying inline from the shade made Google Messages append a history entry with a null `Person`, and the shipped projection emitted `{"senderAbsent":true,"text":…}` with **no `sender` key at all** — neither an empty sender nor a `sender_person`. The spike never captured a line the posting user wrote, so this is the first observation of it, and it is what the direction rule rests on.
+- **The shade's Clear all arrives as `CANCEL_ALL`.** All six removals in the drill carried `removalReasonName` `CANCEL_ALL`. The `LISTENER_CANCEL_ALL` recorded in check 5 above is a different thing: that was the listener cancelling notifications itself through `cancelAllNotifications()`. Both reasons exist; the shade button is not the one check 5 measured.
+- **A shell-posted `MessagingStyle` carries no `category` at all.** `cmd notification post` has no flag for a notification category, so the shell cannot build one. That is a limit of the tool, not a finding about apps — but it means the raw non-`MessagingStyle` path has no device evidence and no fixture, and nothing about it should be read as tested.
+- **A history entry's own time moved.** Google Messages posted one notification twice, 501 ms apart, and the entry's own `time` was different in the two posts. This is new. It matters because the entry time was being treated as a fixed property of the message; it is not always one, and a defect lived in that assumption.
+
+**What this drill does not do.** It ran on an emulator reporting manufacturer `Google`, with one real messaging app and one shell stand-in.
+
+- Check 1 stays **partial**. One app of six is still one app of six.
+- Check 3 stays **not run**, and stays a stop condition. There is still no OEM device and still no 24 hours of an unopened app.
+- **No provisional mark comes off.** Every rule marked provisional under CAP-25 stays marked. CAP-25 says a mark comes off with a dated result on hardware; this is a dated result on an emulator, which is the thing CAP-25 was written to distinguish.
 
 ## Go / no-go
 

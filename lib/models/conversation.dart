@@ -13,7 +13,19 @@ enum KeySource {
 
   /// No candidate was present. The conversation is keyed by its own
   /// notification key and is never merged into another (CAP-3).
-  notificationKey;
+  notificationKey,
+
+  /// CAP-21's fallback: a notification with no message history, kept because
+  /// its category said it was a message, is keyed by the source app's package
+  /// alone.
+  ///
+  /// A member of its own rather than borrowed from [notificationKey], because
+  /// CAP-3 stores the field the key *came from* and this key came from neither
+  /// a candidate nor the notification's key. A row claiming `notificationKey`
+  /// while holding a package would send the keying migration CAP-3 exists for
+  /// looking at the wrong column, and would tell the reader the thread can
+  /// never merge when in fact every raw notification from the app lands in it.
+  package;
 
   static KeySource fromDb(Object? value) => KeySource.values.firstWhere(
     (KeySource k) => k.name == value,

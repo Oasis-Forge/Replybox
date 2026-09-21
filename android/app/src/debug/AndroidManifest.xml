@@ -5,6 +5,15 @@
     -->
     <uses-permission android:name="android.permission.INTERNET"/>
 
+    <!-- SpikeRawPoster needs this to post at all from API 33 up. PERM-15 forbids
+         it in the RELEASE build until the release that first ships a snooze, and
+         the debug source set is exactly where a permission that must never reach
+         a release build belongs; INTERNET is here on the same footing. Nothing
+         merges this into the release manifest: check with
+         `grep POST_NOTIFICATIONS android/app/build/intermediates/merged_manifests/release/*/AndroidManifest.xml`
+         and expect no match. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+
     <application>
         <!-- Capture spike for docs/PLAN.md section 5, and throwaway with it.
              It lives in the debug source set so no part of it can reach a
@@ -35,6 +44,30 @@
             <intent-filter>
                 <action android:name="com.oasisforge.replybox.SPIKE_REPLY"/>
                 <action android:name="com.oasisforge.replybox.SPIKE_DISMISS"/>
+            </intent-filter>
+        </receiver>
+
+        <!-- CAP-21, CAP-6, CAP-7, CAP-8: posts the notification shapes nothing on
+             the device can otherwise produce, because `cmd notification post` has
+             no category flag and no installed app posts a non-MessagingStyle
+             msg/social/email notification on demand. Exported so
+             `adb shell am broadcast` can reach it; debug-only, so nothing exported
+             here exists in a release build and release.yml's permission gate never
+             sees it (CAP-20, PERM-15). -->
+        <receiver
+            android:name=".spike.SpikeRawPoster"
+            android:exported="true">
+            <!-- SPIKE_BRIDGE switches SpikeCaptureBridge on and off. It is off on
+                 every fresh install and after every `spike.sh reset`, and this
+                 broadcast is the only thing that turns it on. The bridge itself is
+                 a debug-source-set class that reaches the shipped capture path
+                 through its public API; nothing in src/main knows it exists, and
+                 OwnPackageGuardTest fails if that ever stops being true
+                 (PERM-12). -->
+            <intent-filter>
+                <action android:name="com.oasisforge.replybox.SPIKE_POST"/>
+                <action android:name="com.oasisforge.replybox.SPIKE_POST_REPLY"/>
+                <action android:name="com.oasisforge.replybox.SPIKE_BRIDGE"/>
             </intent-filter>
         </receiver>
     </application>

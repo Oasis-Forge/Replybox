@@ -1,7 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- CAP-24: automatic cloud backup and device-to-device transfer must never
      copy the message database or the native queue off the phone. Excluding
-     both domains here is what makes "everything stays on your phone" true. -->
+     both domains here is what makes "everything stays on your phone" true.
+
+     domain="file" is getFilesDir(), and both native capture files live there:
+     capture-queue.jsonl, which holds projected message text between the
+     listener and Dart (CAP-15), and capture-store.json, which holds the
+     included-apps set and every package seen posting (INB-20). Neither is in
+     getExternalFilesDir, which the spike used and which is world-readable, and
+     neither is in SharedPreferences, whose domain="sharedpref" is not excluded
+     here. Moving either one out of getFilesDir() silently un-excludes it. -->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="database" />

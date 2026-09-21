@@ -1,7 +1,9 @@
 name: Release
 
-# Every merge to main builds the APK and AAB and checks the release manifest's
-# permissions. CI makes every PR bump the version, so a merge is normally a
+# Every merge to main builds the APK and AAB and checks the release manifest: its
+# permissions (RUN-2) and its backup rules (CAP-24), both read off the built
+# artifact rather than the source file. CI makes every PR bump the version, so a
+# merge is normally a
 # release; one that leaves the version alone (a Dependabot PR, or a PR merged
 # behind another) is built and checked all the same, and the summary says it is
 # not a release.
@@ -163,6 +165,32 @@ jobs:
           "$aapt2" dump permissions build/app/outputs/flutter-apk/app-release.apk > permissions.txt
           cat permissions.txt
           bash tool/check_permissions.sh permissions.txt
+
+      # CAP-24: automatic cloud backup and device-to-device transfer are the only
+      # way captured messages can leave the phone without the internet permission,
+      # and the gate above cannot see them -- it reads uses-permission lines and
+      # capture declares none (CAP-20). So CAP-24 asks for this check by name, in
+      # the same place and the same shape: the built manifest, failing on a change.
+      #
+      # The built manifest and not android/app/src/main/AndroidManifest.xml. A
+      # plugin whose manifest sets android:allowBackup="true" wins over the app's
+      # node in the merge unless that node carries tools:replace, so the source
+      # file would still read false while the APK backs the database up. That merge
+      # is what this exists to catch, and a plugin arrives in a Dependabot PR --
+      # which is exactly the merge this job runs on without a version bump.
+      - name: Check the release manifest's backup rules
+        run: |
+          # Same shape as the permissions step above, for the same reason: the
+          # default step shell has no pipefail, so a dump that failed would leave
+          # an empty file and pass.
+          set -euo pipefail
+          aapt2=$(find "$ANDROID_HOME/build-tools" -name aapt2 -type f | sort -V | tail -n 1)
+          "$aapt2" dump xmltree build/app/outputs/flutter-apk/app-release.apk \
+            --file AndroidManifest.xml > manifest.txt
+          # Not cat'd the way permissions.txt is: the tree is the whole manifest,
+          # hundreds of lines. check_backup_rules.sh echoes the three values it
+          # checked on success and the offending one on failure.
+          bash tool/check_backup_rules.sh manifest.txt
 
       # Nothing is copied to dist/ and nothing is kept: this job's build is a
       # check, not a deliverable, and a downloadable CI build is one nobody can
