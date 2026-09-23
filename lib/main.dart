@@ -11,8 +11,12 @@ import 'l10n/app_localizations.dart';
 import 'models/conversation.dart';
 import 'providers/apps_provider.dart';
 import 'providers/inbox_provider.dart';
+import 'providers/permissions_provider.dart';
+import 'screens/battery_guidance_screen.dart';
+import 'screens/disclosure_screen.dart';
 import 'screens/included_apps_screen.dart';
 import 'screens/inbox_screen.dart';
+import 'screens/privacy_policy_screen.dart';
 import 'screens/thread_screen.dart';
 import 'services/android_app_launcher.dart';
 import 'services/android_capture_service.dart';
@@ -73,6 +77,13 @@ void main() {
               reminders: const NoopReminderScheduler(),
               entitlements: const NoopEntitlements(),
               appLock: const NoopAppLock(),
+              // PERM-14's two settings pages and the one fact it prints about
+              // the phone. Its own class rather than a third face on `source`:
+              // none of it is about notifications, and every one of its three
+              // answers is something the app can only *offer*. It adds no
+              // permission to the release build (PERM-15) — `Build.MANUFACTURER`
+              // is a public field, and both intents are unguarded.
+              systemSettings: const AndroidSystemSettings(),
             )
           : noopServices(),
       captureSync: onAndroid ? CaptureSync(source, repository, health) : null,
@@ -137,8 +148,50 @@ class _ReplyboxAppState extends State<ReplyboxApp> with WidgetsBindingObserver {
     captureSignal: _captureSignal,
   );
 
+  /// Section 9's whole state, built here for the same reason the two above are:
+  /// it is read on every cold start and every resume, and the resume is this
+  /// object's `didChangeAppLifecycleState`. A provider rebuilt under that
+  /// observer would leave the observer refreshing a state object no screen is
+  /// reading.
+  ///
+  /// It takes the capture signal for the third reason the two above take it,
+  /// and it is the reason the drain loop nudges a signal rather than one
+  /// object: PERM-8's banner is gone on the first resume "**or listener
+  /// binding** after access returns, whichever comes first", and PERM-10's line
+  /// goes "**the moment** the listener connects". A binding enqueues a
+  /// `listener_connected` event, `CaptureSync` drains it, and the signal is how
+  /// that reaches a provider without a resume.
+  ///
+  /// It still owns no timer and no lifecycle observer of its own (see its class
+  /// comment), so what it needs from here is the call on resume, that signal,
+  /// and a `dispose` before the signal's.
+  late final PermissionsProvider _permissions = PermissionsProvider(
+    widget.repository,
+    widget.services,
+    captureSignal: _captureSignal,
+  );
+
   /// The one the drain loop was given, or one of our own when there is no loop.
   late final CaptureHealth _health = widget.health ?? CaptureHealth();
+
+  /// PERM-4's and PERM-14's pushes need a navigator, and this state sits
+  /// *above* the `MaterialApp` that creates one — so its own `context` has none.
+  ///
+  /// A key rather than moving the push down into [InboxScreen]: PERM-4 says the
+  /// disclosure is offered without a tap exactly once per install, and PERM-14
+  /// says the guidance is shown once after the first screen is drawn. Both are
+  /// launch-and-resume facts about the app, not about the conversation list,
+  /// and putting them in the first screen would mean the next screen to become
+  /// the first screen (RUN-3's setup page) silently loses them.
+  final GlobalKey<NavigatorState> _navigator = GlobalKey<NavigatorState>();
+
+  /// True from the moment an onboarding push is scheduled until the last of
+  /// them has been popped.
+  ///
+  /// A resume lands while the disclosure is already open more often than it
+  /// sounds — the user goes to the system page from it and comes back — and
+  /// without this the app would push a second disclosure on top of the first.
+  bool _onboardingInFlight = false;
 
   @override
   void initState() {
@@ -156,12 +209,101 @@ class _ReplyboxAppState extends State<ReplyboxApp> with WidgetsBindingObserver {
     // Not in `CaptureSync.start`: that is built on Android alone and only when
     // there is a listener, and an install whose history began before access was
     // granted still has a beginning.
-    unawaited(widget.repository.installedAt(DateTime.now().toUtc()));
+    final Future<void> installStamped = widget.repository.installedAt(
+      DateTime.now().toUtc(),
+    );
+    unawaited(installStamped);
     unawaited(_inbox.load());
     // The listener kept queueing while the app was closed, so the first drain
     // happens before anyone has had a chance to pull anything to refresh
     // (CAP-13, INB-25).
     widget.captureSync?.start(onChanged: _captureSignal.captured);
+    // PERM-5's first read, and PERM-4's one-per-install offer behind it. Held
+    // behind the write above rather than started beside it: PERM-8's third
+    // branch — "capture has never been on, and nothing has been stored since
+    // it was installed on <date>" — reads `installed_at`, and on the very first
+    // launch the two would otherwise be a write and a read of the same key
+    // racing each other. Losing that race prints CAP-12's timeless sentence to
+    // a user whose install date the app was in the middle of writing down.
+    unawaited(_firstPermissionsRead(installStamped));
+  }
+
+  /// PERM-5 on a cold start, then PERM-4's and PERM-14's offers (PERM-6's route
+  /// from a fresh install).
+  ///
+  /// Access is read from the system here, and the disclosure is *pushed over*
+  /// the first screen rather than shown in place of it: `home:` below is
+  /// [InboxScreen] on every launch including the very first, because PERM-4 is
+  /// explicit that no screen is replaced by a permission wall and that
+  /// declining leaves an app that works.
+  Future<void> _firstPermissionsRead(Future<void> installStamped) async {
+    try {
+      await installStamped;
+    } catch (_) {
+      // A failed stamp is a missing `installed_at`, which PERM-8's third branch
+      // already handles by drawing the sentence without a date rather than
+      // inventing one. It must not also cost the user the access read: that is
+      // the one thing on this path that decides whether the app can see
+      // anything at all.
+    }
+    if (!mounted) return;
+    await _permissions.refresh();
+    if (!mounted) return;
+    _offerOnboarding();
+  }
+
+  /// Schedules PERM-4's and PERM-14's pushes for after the current frame.
+  ///
+  /// Post-frame, which is PERM-14's "after the first screen has been drawn and
+  /// never in place of it" and the same discipline PERM-4 asks of the
+  /// disclosure: the user sees the app they installed, and then sees what it
+  /// wants to tell them, in that order. A push from inside the build that is
+  /// drawing the first screen would also be a navigation during a build, which
+  /// Flutter refuses outright.
+  void _offerOnboarding() {
+    if (_onboardingInFlight) return;
+    if (!_permissions.shouldShowDisclosure &&
+        !_permissions.shouldShowBatteryGuidance) {
+      return;
+    }
+    _onboardingInFlight = true;
+    WidgetsBinding.instance.addPostFrameCallback((Duration _) {
+      unawaited(_pushOnboarding());
+    });
+  }
+
+  /// The disclosure, then the guidance, in that order where both are pending.
+  ///
+  /// The order is PERM-14's: the guidance is about keeping a listener alive,
+  /// and showing it before the screen that explains what the listener reads
+  /// would be answering a question the user has not been asked yet.
+  ///
+  /// Each screen records its own showing from its own `initState` — PERM-5's
+  /// `disclosure_shown_at` and PERM-14's `battery_guidance_shown_at` both mean
+  /// *it was displayed* — so the two `should` flags are already false by the
+  /// time the push returns and nothing here writes anything.
+  Future<void> _pushOnboarding() async {
+    try {
+      if (_permissions.shouldShowDisclosure) {
+        // Re-read through the key on each push: the navigator this state is
+        // pointing at can be rebuilt between the two, and a captured
+        // `NavigatorState` would be the disposed one.
+        final NavigatorState? navigator = _navigator.currentState;
+        if (navigator == null) return;
+        await navigator.pushNamed(DisclosureScreen.routeName);
+        if (!mounted) return;
+      }
+      if (_permissions.shouldShowBatteryGuidance) {
+        final NavigatorState? navigator = _navigator.currentState;
+        if (navigator == null) return;
+        await navigator.pushNamed(BatteryGuidanceScreen.routeName);
+      }
+    } finally {
+      // In the `finally` so an early return — or a throw out of a route — cannot
+      // leave the flag raised and make every later resume believe a push is
+      // still on screen.
+      _onboardingInFlight = false;
+    }
   }
 
   /// What a resume changes that nothing else can tell the app about.
@@ -177,11 +319,44 @@ class _ReplyboxAppState extends State<ReplyboxApp> with WidgetsBindingObserver {
   ///  * A resume that captured nothing still crossed a midnight, and INB-1's
   ///    times are relative to today. Reading again is cheap and keeps a row
   ///    from claiming this morning's clock time for yesterday's message.
+  ///
+  /// Since section 9, a third: whether the app can see notifications at all.
+  /// PERM-5 says that is read from the system on every cold start and every
+  /// resume and from nothing the app stored — the process can be killed while
+  /// the system page is open and the listener can bind while the Flutter app is
+  /// dead, so there is no return to observe and no flag that could stand in for
+  /// one. It is also the resume PERM-10 counts: one call to
+  /// [PermissionsProvider.refresh] is one resume, which is what makes "at most
+  /// one rebind request per resume" enforceable in the state layer.
+  ///
+  /// **The order of the three below is load-bearing and is why the third is
+  /// last.** `forgetAll` must run inside this synchronous observer pass:
+  /// `source_app.dart` schedules its own re-resolve as a microtask precisely so
+  /// that it runs after the last observer, and it is depending on the cache
+  /// having been dropped by then. `_refreshAfterDrain` then has to be started
+  /// before anything that can occupy the event loop, because INB-25's deadline
+  /// is measured from this resume. The permissions read is started after both,
+  /// touches neither the package cache nor the queue, and can take ten seconds
+  /// on PERM-10's branch — which is exactly why it is not in front of them.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed) return;
     widget.services.packages.forgetAll();
     unawaited(_refreshAfterDrain());
+    unawaited(_resumePermissionsRead());
+  }
+
+  /// PERM-5's read on a resume, and PERM-14's offer behind it.
+  ///
+  /// The guidance is shown "on the first launch **or resume** that reads access
+  /// as granted while the guidance has not yet been shown", which is this: a
+  /// user who granted access on the system page and came back has had no launch
+  /// since, and a flag written when the grant was read rather than when the
+  /// guidance was drawn is the thing PERM-14's last clause forbids.
+  Future<void> _resumePermissionsRead() async {
+    await _permissions.refresh();
+    if (!mounted) return;
+    _offerOnboarding();
   }
 
   /// INB-25's second half: a message captured while the app was not
@@ -226,7 +401,14 @@ class _ReplyboxAppState extends State<ReplyboxApp> with WidgetsBindingObserver {
     widget.captureSync?.stop();
     _inbox.dispose();
     _apps.dispose();
-    // After the two that listen to it, so neither is left holding a listener
+    // Ours, built above and provided by `.value`, so ownership never left this
+    // state — the same bargain `_inbox` and `_apps` are on. It listens to the
+    // capture signal like those two, so it belongs with them and above the line
+    // that disposes it; what it can *also* be holding is PERM-10's ten-second
+    // wait, and `DeferredNotifier` is what makes that wait finish harmlessly
+    // into a disposed notifier.
+    _permissions.dispose();
+    // After the three that listen to it, so none is left holding a listener
     // on a disposed notifier.
     _captureSignal.dispose();
     // Only the one we made. Disposing a notifier we were handed would leave
@@ -265,8 +447,18 @@ class _ReplyboxAppState extends State<ReplyboxApp> with WidgetsBindingObserver {
         // because it is not inbox state: it is what the listener could not do,
         // and it keeps moving while the inbox has nothing new to show.
         ChangeNotifierProvider<CaptureHealth>.value(value: _health),
+        // Section 9's three screens read this, and so does PERM-13's single
+        // status line on the first screen. `.value` like the four above,
+        // because it was built in this state and is disposed there: a
+        // `ChangeNotifierProvider` that constructed it would dispose it on
+        // every rebuild of this widget, and PERM-10's ten-second wait would
+        // finish into a notifier nothing is listening to.
+        ChangeNotifierProvider<PermissionsProvider>.value(value: _permissions),
       ],
       child: MaterialApp(
+        // PERM-4's and PERM-14's pushes happen from the state above this
+        // widget, which has no navigator of its own. See [_navigator].
+        navigatorKey: _navigator,
         onGenerateTitle: (BuildContext context) =>
             AppLocalizations.of(context).appTitle,
         localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -276,6 +468,24 @@ class _ReplyboxAppState extends State<ReplyboxApp> with WidgetsBindingObserver {
         routes: <String, WidgetBuilder>{
           IncludedAppsScreen.routeName: (BuildContext context) =>
               const IncludedAppsScreen(),
+          // PERM-1: the disclosure is a route and a first-run push, and never a
+          // gate. Every in-app path to the system's notification-access page
+          // arrives here first — the push above, PERM-8's banner action, and
+          // the row at the foot of the included-apps list — and the screen
+          // itself is the only caller of `openAccessSettings` in `lib/`.
+          DisclosureScreen.routeName: (BuildContext context) =>
+              const DisclosureScreen(),
+          // PERM-14. Pushed once after the first screen, and reachable from the
+          // included-apps list and from PERM-10's and PERM-11's lines after
+          // that.
+          BatteryGuidanceScreen.routeName: (BuildContext context) =>
+              const BatteryGuidanceScreen(),
+          // PERM-16. No `onOpenHosted`: nothing in the app can open a browser
+          // yet, and the screen shows the hosted address as text rather than a
+          // control that would do nothing. Its doc comment carries the whole of
+          // what is missing.
+          PrivacyPolicyScreen.routeName: (BuildContext context) =>
+              const PrivacyPolicyScreen(),
         },
         home: InboxScreen(
           // INB-18's second tap is on the screen this push opens, so the push

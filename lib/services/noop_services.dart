@@ -10,9 +10,25 @@ import '../models/conversation.dart';
 import 'services.dart';
 
 class NoopNotificationSource implements NotificationSource {
-  const NoopNotificationSource({this.access = false});
+  const NoopNotificationSource({this.access = false, this.connected});
 
   final bool access;
+
+  /// What [listenerConnected] answers, and **null by default, not false**
+  /// (PERM-10).
+  ///
+  /// A device with no listener to ask has learned nothing, and that is a
+  /// different answer from having watched the listener go away. A default of
+  /// false would let a widget test draw PERM-10's `capture is not running`
+  /// line on a build that never had a listener at all — the one sentence
+  /// PERM-10 forbids without evidence, asserted by a test that would pass on
+  /// the build that says it wrongly. That is the same trap
+  /// [NoopPackageInfoService] avoids by never answering
+  /// [PackagePresence.gone].
+  ///
+  /// A test that wants PERM-10's branch says `connected: false`, and by saying
+  /// it states what it is asserting about.
+  final bool? connected;
 
   @override
   Future<bool> hasAccess() async => access;
@@ -23,6 +39,18 @@ class NoopNotificationSource implements NotificationSource {
   @override
   Stream<Map<String, Object?>> events() =>
       const Stream<Map<String, Object?>>.empty();
+
+  @override
+  Future<bool?> listenerConnected() async => connected;
+
+  /// False, and it counts nothing: a phone with no listener cannot make the
+  /// request, and false is "the request could not even be made" rather than
+  /// anything about the listener (PERM-10). A test that needs to count rebinds
+  /// — PERM-10's one-per-resume and its sixty-second floor — uses its own fake,
+  /// because a counter here would make this class stateful and every test would
+  /// share it.
+  @override
+  Future<bool> requestListenerRebind() async => false;
 }
 
 /// Accepts the set and forgets it, which is what a phone with no listener does
@@ -182,6 +210,35 @@ class NoopAppLock implements AppLock {
   Future<bool> authenticate() async => authenticates;
 }
 
+/// Answers "nothing to open and nothing to report", which is what a device with
+/// no settings app can honestly say (PERM-14).
+///
+/// [opens] is false by default for the reason [NoopAppLauncher.succeeds] is:
+/// a fake that claims a page opened is a fake of a phone where it worked, and
+/// PERM-14's screen returns early on a true — so a lying default would suppress
+/// the written path that is the whole of what the app can offer when the page
+/// is not there (PERM-7's third branch, reached a second time).
+///
+/// [reportedManufacturer] is null by default rather than a placeholder name:
+/// PERM-14 prints this value to the user, and a substituted string would be the
+/// app telling them something about their hardware that the hardware did not
+/// say.
+class NoopSystemSettings implements SystemSettings {
+  const NoopSystemSettings({this.reportedManufacturer, this.opens = false});
+
+  final String? reportedManufacturer;
+  final bool opens;
+
+  @override
+  Future<String?> manufacturer() async => reportedManufacturer;
+
+  @override
+  Future<bool> openBatteryOptimisationSettings() async => opens;
+
+  @override
+  Future<bool> openAppInfoSettings() async => opens;
+}
+
 /// The whole bag, no-op. What every test gets unless it swaps one out.
 ///
 /// No longer `const`: [NoopCaptureFilter] remembers what it was pushed, so each
@@ -196,4 +253,5 @@ DeviceServices noopServices() => DeviceServices(
   reminders: const NoopReminderScheduler(),
   entitlements: const NoopEntitlements(),
   appLock: const NoopAppLock(),
+  systemSettings: const NoopSystemSettings(),
 );

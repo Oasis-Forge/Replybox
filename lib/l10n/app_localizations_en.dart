@@ -360,4 +360,197 @@ class AppLocalizationsEn extends AppLocalizations {
   String semanticsRemoveMessages(String app) {
     return 'Remove stored messages from $app';
   }
+
+  @override
+  String get permissionsDisclosureTitle =>
+      'Before you turn on notification access';
+
+  @override
+  String get permissionsDisclosureReads =>
+      'Replybox reads the notifications the apps below post: who sent a message, what it says, when it arrived, and which conversation it belongs to.';
+
+  @override
+  String get permissionsDisclosureUses =>
+      'It puts them in one inbox and answers them there, using the reply field the notification itself carries.';
+
+  @override
+  String get permissionsDisclosureStaysHere =>
+      'Everything stays on this phone. There is no account, no server and no analytics, and this build has no internet permission at all.';
+
+  @override
+  String get permissionsDisclosureWithdraw =>
+      'You can turn notification access off again in your phone\'s settings at any time. Replybox keeps what it already stored and captures nothing new.';
+
+  @override
+  String get permissionsDisclosureLimitsTitle =>
+      'What Replybox still cannot see';
+
+  @override
+  String get permissionsDisclosureLimitBeforeInstall =>
+      'Nothing from before you installed Replybox.';
+
+  @override
+  String get permissionsDisclosureLimitAccessOff =>
+      'Nothing from while notification access was off.';
+
+  @override
+  String get permissionsDisclosureLimitAppOff =>
+      'Nothing from an app you switched off in Included apps.';
+
+  @override
+  String get permissionsDisclosureLimitEdits =>
+      'If a message is edited, unsent or deleted in the app it came from, Replybox is never told, so the copy here stays as it arrived.';
+
+  @override
+  String get permissionsDisclosureLimitHidden =>
+      'Your phone hides some messages from every notification listener, and no setting in Replybox can turn that off.';
+
+  @override
+  String get permissionsDisclosureLimitOpenInApp =>
+      'A conversation whose notification this run is no longer holding opens in the app it came from instead of answering here.';
+
+  @override
+  String get permissionsDisclosureLimitWorkProfile =>
+      'Replybox has not been tried with a work profile. Nobody has measured whether work notifications reach it, or whether a reply sent from here arrives.';
+
+  @override
+  String get permissionsDisclosureAppsTitle =>
+      'Apps Replybox captures without you choosing them';
+
+  @override
+  String get permissionsDisclosureAppsExplainer =>
+      'These apps are captured as soon as they post a notification, without you naming them. Included apps turns any of them off.';
+
+  @override
+  String get permissionsDisclosureAppNotInstalled =>
+      'Not installed on this phone';
+
+  @override
+  String get permissionsDisclosureTurnOn => 'Turn on notification access';
+
+  @override
+  String get permissionsDisclosureDecline => 'Continue without it';
+
+  @override
+  String get permissionsDisclosureContinue => 'Continue';
+
+  @override
+  String get permissionsDisclosureStillOff =>
+      'Notification access is still off, so nothing has been captured.';
+
+  @override
+  String get permissionsDisclosureNoSettingsPage =>
+      'Replybox cannot open that page on this phone. Open Settings, find the notification access list, and switch Replybox on there.';
+
+  @override
+  String captureOffSince(String time) {
+    return 'Capture is off. Nothing has been stored since $time.';
+  }
+
+  @override
+  String captureOffSinceAtLeast(String time) {
+    return 'Capture is off. Nothing has been stored since at least $time.';
+  }
+
+  @override
+  String captureNeverOn(String date) {
+    return 'Capture has never been on. Replybox has stored nothing since it was installed on $date.';
+  }
+
+  @override
+  String get captureOffAction => 'How to turn it on';
+
+  @override
+  String get captureNotRunning => 'Capture is not running right now.';
+
+  @override
+  String captureQuietSince(String time) {
+    return 'Nothing has arrived since $time. That may be perfectly normal.';
+  }
+
+  @override
+  String get captureGuidanceAction => 'Why this happens';
+
+  @override
+  String get captureQuietDismiss => 'Dismiss';
+
+  @override
+  String get batteryGuidanceTitle => 'Battery and background limits';
+
+  @override
+  String get batteryGuidanceAndroid =>
+      'Android stops background services to save battery, and some phones stop them harder than Android does. Replybox cannot change any of those settings for itself.';
+
+  @override
+  String get batteryGuidanceUnmeasured =>
+      'Nobody has yet measured whether any of these settings keeps Replybox\'s listener alive on any phone. This is a place to look, not a fix Replybox promises.';
+
+  @override
+  String batteryGuidanceManufacturer(String manufacturer) {
+    return 'This phone reports its manufacturer as $manufacturer.';
+  }
+
+  @override
+  String get batteryGuidanceManufacturerUnknown =>
+      'This phone did not report a manufacturer.';
+
+  @override
+  String get batteryGuidanceNoVerifiedSteps =>
+      'Replybox has no steps verified on this phone, so the two Android pages below are what it can offer. It does not guess what a phone does to it.';
+
+  @override
+  String get batteryGuidanceBatteryPage => 'Open battery optimisation settings';
+
+  @override
+  String get batteryGuidanceBatteryPagePath =>
+      'Open Settings, find Replybox in the list of apps, and look for its battery setting. Where that sits differs from phone to phone.';
+
+  @override
+  String get batteryGuidanceAppInfoPage => 'Open Replybox app info';
+
+  @override
+  String get batteryGuidanceAppInfoPagePath =>
+      'Open Settings, find Replybox in the list of apps, and open it.';
+
+  @override
+  String get batteryGuidanceCannotOpen =>
+      'Replybox cannot open that page on this phone.';
+
+  @override
+  String get privacyPolicyTitle => 'Privacy policy';
+
+  @override
+  String get privacyPolicyStoredTitle => 'What is stored';
+
+  @override
+  String get privacyPolicyStoredWhere =>
+      'All of it is in one database on this phone, in Replybox\'s own storage. No copy is made anywhere else.';
+
+  @override
+  String get privacyPolicyPackagesTitle =>
+      'What Replybox asks your phone about';
+
+  @override
+  String get privacyPolicyPackages =>
+      'Replybox can see which apps on this phone can be opened. It only ever asks about an app that has already sent you a notification, or one of the apps it names on the permission screen, and it never asks for a list of what you have installed.';
+
+  @override
+  String get privacyPolicyLeavesTitle => 'What leaves this phone';
+
+  @override
+  String get privacyPolicyLeaves =>
+      'Nothing. The release build has no internet permission, so it could not send anything even if it tried, and reading this page inside Replybox makes no network request at all.';
+
+  @override
+  String get privacyPolicyDeleting =>
+      'Deleting a conversation here removes it from this phone and nowhere else, because there is nowhere else.';
+
+  @override
+  String privacyPolicyHostedAddress(String url) {
+    return 'The same page is published at $url';
+  }
+
+  @override
+  String get privacyPolicyOpenHosted =>
+      'Open in your browser (this leaves your phone)';
 }

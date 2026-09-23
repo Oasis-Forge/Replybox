@@ -572,6 +572,306 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Remove stored messages from {app}'**
   String semanticsRemoveMessages(String app);
+
+  /// Title of the disclosure screen, which is the only route inside the app to the system notification-access page (PERM-1).
+  ///
+  /// In en, this message translates to:
+  /// **'Before you turn on notification access'**
+  String get permissionsDisclosureTitle;
+
+  /// PERM-2's first line — what is read. Quoted by the in-app privacy policy, which holds this claim once rather than restating it (PERM-16).
+  ///
+  /// In en, this message translates to:
+  /// **'Replybox reads the notifications the apps below post: who sent a message, what it says, when it arrived, and which conversation it belongs to.'**
+  String get permissionsDisclosureReads;
+
+  /// PERM-2's second line — what is done with them (CAP-14).
+  ///
+  /// In en, this message translates to:
+  /// **'It puts them in one inbox and answers them there, using the reply field the notification itself carries.'**
+  String get permissionsDisclosureUses;
+
+  /// PERM-2's third line — product principle 1. Quoted by the in-app privacy policy (PERM-16).
+  ///
+  /// In en, this message translates to:
+  /// **'Everything stays on this phone. There is no account, no server and no analytics, and this build has no internet permission at all.'**
+  String get permissionsDisclosureStaysHere;
+
+  /// PERM-2's fifth line — the grant can be withdrawn, and what happens then (PERM-8).
+  ///
+  /// In en, this message translates to:
+  /// **'You can turn notification access off again in your phone\'s settings at any time. Replybox keeps what it already stored and captures nothing new.'**
+  String get permissionsDisclosureWithdraw;
+
+  /// PERM-2's fourth line, as a heading over the seven clauses below (CAP-12, product principle 3).
+  ///
+  /// In en, this message translates to:
+  /// **'What Replybox still cannot see'**
+  String get permissionsDisclosureLimitsTitle;
+
+  /// CAP-12's first absence, in CAP-12's order (PERM-2).
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing from before you installed Replybox.'**
+  String get permissionsDisclosureLimitBeforeInstall;
+
+  /// CAP-12's second absence (PERM-2, PERM-8).
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing from while notification access was off.'**
+  String get permissionsDisclosureLimitAccessOff;
+
+  /// CAP-12's third absence (PERM-2, CAP-1, INB-22).
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing from an app you switched off in Included apps.'**
+  String get permissionsDisclosureLimitAppOff;
+
+  /// CAP-12's fourth absence (PERM-2, CAP-26).
+  ///
+  /// In en, this message translates to:
+  /// **'If a message is edited, unsent or deleted in the app it came from, Replybox is never told, so the copy here stays as it arrived.'**
+  String get permissionsDisclosureLimitEdits;
+
+  /// The first absence this area meets before CAP-12 does (PERM-2, CAP-8).
+  ///
+  /// In en, this message translates to:
+  /// **'Your phone hides some messages from every notification listener, and no setting in Replybox can turn that off.'**
+  String get permissionsDisclosureLimitHidden;
+
+  /// The second (PERM-2, CAP-14, INB-13).
+  ///
+  /// In en, this message translates to:
+  /// **'A conversation whose notification this run is no longer holding opens in the app it came from instead of answering here.'**
+  String get permissionsDisclosureLimitOpenInApp;
+
+  /// The third (PERM-2, PERM-17). Provisional and says so; it claims nothing in either direction, which is why it does not say Replybox cannot speak for a work profile — that would be a measurement nobody has made.
+  ///
+  /// In en, this message translates to:
+  /// **'Replybox has not been tried with a work profile. Nobody has measured whether work notifications reach it, or whether a reply sent from here arrives.'**
+  String get permissionsDisclosureLimitWorkProfile;
+
+  /// Heading over PERM-3's list, which shows every shipped-list app in full — no truncation and no "and others" (decision 6, decision 9).
+  ///
+  /// In en, this message translates to:
+  /// **'Apps Replybox captures without you choosing them'**
+  String get permissionsDisclosureAppsTitle;
+
+  /// PERM-3's sentence beside the list (INB-20, INB-22). Quoted by the in-app privacy policy (PERM-16).
+  ///
+  /// In en, this message translates to:
+  /// **'These apps are captured as soon as they post a notification, without you naming them. Included apps turns any of them off.'**
+  String get permissionsDisclosureAppsExplainer;
+
+  /// Marker beside a shipped-list app the package manager cannot find, so a user can switch it off before it ever posts (PERM-3, INB-16).
+  ///
+  /// In en, this message translates to:
+  /// **'Not installed on this phone'**
+  String get permissionsDisclosureAppNotInstalled;
+
+  /// The disclosure's one primary button, which opens the system page (PERM-1, PERM-7).
+  ///
+  /// In en, this message translates to:
+  /// **'Turn on notification access'**
+  String get permissionsDisclosureTurnOn;
+
+  /// The one-tap decline. The app stays whole afterwards: nothing is greyed out and no screen is replaced (PERM-4).
+  ///
+  /// In en, this message translates to:
+  /// **'Continue without it'**
+  String get permissionsDisclosureDecline;
+
+  /// Closes the disclosure where access is already on and it is being shown as information (PERM-5).
+  ///
+  /// In en, this message translates to:
+  /// **'Continue'**
+  String get permissionsDisclosureContinue;
+
+  /// The one extra line on a return from the system page with access still missing (PERM-6).
+  ///
+  /// In en, this message translates to:
+  /// **'Notification access is still off, so nothing has been captured.'**
+  String get permissionsDisclosureStillOff;
+
+  /// Replaces the primary button where neither of PERM-7's intents starts, rather than leaving a button that does nothing (PERM-7).
+  ///
+  /// In en, this message translates to:
+  /// **'Replybox cannot open that page on this phone. Open Settings, find the notification access list, and switch Replybox on there.'**
+  String get permissionsDisclosureNoSettingsPage;
+
+  /// PERM-8's banner where the newest capture window was closed on a reported disconnection, so the end is exact (PERM-9).
+  ///
+  /// In en, this message translates to:
+  /// **'Capture is off. Nothing has been stored since {time}.'**
+  String captureOffSince(String time);
+
+  /// PERM-8's banner where the window was closed on a later discovery: Replybox is not told when access is taken away, so this is the last moment it can prove and never the moment it noticed (PERM-9, product principle 3).
+  ///
+  /// In en, this message translates to:
+  /// **'Capture is off. Nothing has been stored since at least {time}.'**
+  String captureOffSinceAtLeast(String time);
+
+  /// PERM-8's banner where no window has ever been closed because access has never been granted since install; it names installed_at rather than a time the app does not hold (CAP-12).
+  ///
+  /// In en, this message translates to:
+  /// **'Capture has never been on. Replybox has stored nothing since it was installed on {date}.'**
+  String captureNeverOn(String date);
+
+  /// The banner's one action. It opens the disclosure and never the system page directly (PERM-1, PERM-8).
+  ///
+  /// In en, this message translates to:
+  /// **'How to turn it on'**
+  String get captureOffAction;
+
+  /// PERM-10's line: access is granted and this app's listener reported itself disconnected, a rebind was asked for, and ten seconds later it still is. Provisional — the ten seconds are design, not a measurement (CAP-25).
+  ///
+  /// In en, this message translates to:
+  /// **'Capture is not running right now.'**
+  String get captureNotRunning;
+
+  /// PERM-11's dismissible line. It says when something last arrived and never that capture is working, because silence and a dead listener are indistinguishable (product principle 3).
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing has arrived since {time}. That may be perfectly normal.'**
+  String captureQuietSince(String time);
+
+  /// The action on both PERM-10's line and PERM-11's line; both open the battery guidance (PERM-14).
+  ///
+  /// In en, this message translates to:
+  /// **'Why this happens'**
+  String get captureGuidanceAction;
+
+  /// Dismisses PERM-11's line, which is the only one of the three that can be dismissed: the other two report a state that does not go away on being tapped (PERM-8, PERM-13).
+  ///
+  /// In en, this message translates to:
+  /// **'Dismiss'**
+  String get captureQuietDismiss;
+
+  /// Title of the battery-guidance screen, reachable from Included apps and from PERM-10's and PERM-11's lines (PERM-14).
+  ///
+  /// In en, this message translates to:
+  /// **'Battery and background limits'**
+  String get batteryGuidanceTitle;
+
+  /// PERM-14's first two claims: what happens, and that this app cannot change it.
+  ///
+  /// In en, this message translates to:
+  /// **'Android stops background services to save battery, and some phones stop them harder than Android does. Replybox cannot change any of those settings for itself.'**
+  String get batteryGuidanceAndroid;
+
+  /// PERM-14's honesty clause: the 24-hour OEM survival check has not run (spike, 21 September 2026, check 3; CAP-25, decision 11).
+  ///
+  /// In en, this message translates to:
+  /// **'Nobody has yet measured whether any of these settings keeps Replybox\'s listener alive on any phone. This is a place to look, not a fix Replybox promises.'**
+  String get batteryGuidanceUnmeasured;
+
+  /// Shows Build.MANUFACTURER exactly as the device reported it, left to right inside a right-to-left layout, so an unlisted phone is visibly unlisted rather than silently generic (PERM-14, LANG-5).
+  ///
+  /// In en, this message translates to:
+  /// **'This phone reports its manufacturer as {manufacturer}.'**
+  String batteryGuidanceManufacturer(String manufacturer);
+
+  /// Shown where Build.MANUFACTURER could not be read, rather than printing a name the device never gave (PERM-14).
+  ///
+  /// In en, this message translates to:
+  /// **'This phone did not report a manufacturer.'**
+  String get batteryGuidanceManufacturerUnknown;
+
+  /// The generic branch, which every phone takes today because an entry with no verified date does not ship (PERM-14, decision 11). It names no manufacturer and states nothing about one.
+  ///
+  /// In en, this message translates to:
+  /// **'Replybox has no steps verified on this phone, so the two Android pages below are what it can offer. It does not guess what a phone does to it.'**
+  String get batteryGuidanceNoVerifiedSteps;
+
+  /// Opens the system's battery-optimisation list page, which needs no permission (PERM-14, PERM-15).
+  ///
+  /// In en, this message translates to:
+  /// **'Open battery optimisation settings'**
+  String get batteryGuidanceBatteryPage;
+
+  /// The written path, shown in place of the control where that page does not open on this phone, rather than leaving a button that does nothing (PERM-14, PERM-7). It does not spell out a fixed menu path: on the one phone that reaches this text the app has just failed to open the page, which is the worst place to assert what that phone's Settings look like.
+  ///
+  /// In en, this message translates to:
+  /// **'Open Settings, find Replybox in the list of apps, and look for its battery setting. Where that sits differs from phone to phone.'**
+  String get batteryGuidanceBatteryPagePath;
+
+  /// Opens this app's own app-info page, which needs no permission (PERM-14, PERM-15).
+  ///
+  /// In en, this message translates to:
+  /// **'Open Replybox app info'**
+  String get batteryGuidanceAppInfoPage;
+
+  /// The written path for the same page, for the same reason (PERM-14, PERM-7). Named apps and not a menu path, for the reason batteryGuidanceBatteryPagePath gives.
+  ///
+  /// In en, this message translates to:
+  /// **'Open Settings, find Replybox in the list of apps, and open it.'**
+  String get batteryGuidanceAppInfoPagePath;
+
+  /// Said once beside whichever written path replaced a control, so a page that will not open is a stated limit rather than a dead button (PERM-14, PERM-7).
+  ///
+  /// In en, this message translates to:
+  /// **'Replybox cannot open that page on this phone.'**
+  String get batteryGuidanceCannotOpen;
+
+  /// Title of the in-app privacy policy, which ships inside the app and is translated with every other string, so reading it makes no network request (PERM-16, LANG-2).
+  ///
+  /// In en, this message translates to:
+  /// **'Privacy policy'**
+  String get privacyPolicyTitle;
+
+  /// Heading. The three claims under it are PERM-2's and PERM-3's own message IDs, quoted rather than restated, so the disclosure and the policy cannot drift (PERM-16).
+  ///
+  /// In en, this message translates to:
+  /// **'What is stored'**
+  String get privacyPolicyStoredTitle;
+
+  /// Where the captured messages live (PERM-16, product principle 1).
+  ///
+  /// In en, this message translates to:
+  /// **'All of it is in one database on this phone, in Replybox\'s own storage. No copy is made anywhere else.'**
+  String get privacyPolicyStoredWhere;
+
+  /// Heading over the package-visibility claim that decision 13 made a merge condition (PERM-16, INB-20).
+  ///
+  /// In en, this message translates to:
+  /// **'What Replybox asks your phone about'**
+  String get privacyPolicyPackagesTitle;
+
+  /// The claim decision 13 bought back as a rule rather than a manifest, stated in the app's own words and held by a test (INB-20, PERM-16).
+  ///
+  /// In en, this message translates to:
+  /// **'Replybox can see which apps on this phone can be opened. It only ever asks about an app that has already sent you a notification, or one of the apps it names on the permission screen, and it never asks for a list of what you have installed.'**
+  String get privacyPolicyPackages;
+
+  /// Heading (PERM-16).
+  ///
+  /// In en, this message translates to:
+  /// **'What leaves this phone'**
+  String get privacyPolicyLeavesTitle;
+
+  /// Product principle 1 (PERM-16). It names no control: nothing in the app opens a browser today, and the earlier wording pointed at a link below it that is not drawn. Where a control does ship, its own label is what says it leaves the phone (privacyPolicyOpenHosted).
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing. The release build has no internet permission, so it could not send anything even if it tried, and reading this page inside Replybox makes no network request at all.'**
+  String get privacyPolicyLeaves;
+
+  /// What a delete means (DEL-1, PERM-16).
+  ///
+  /// In en, this message translates to:
+  /// **'Deleting a conversation here removes it from this phone and nowhere else, because there is nowhere else.'**
+  String get privacyPolicyDeleting;
+
+  /// The hosted copy's address, shown as text beside the page rather than only as a link (PERM-16).
+  ///
+  /// In en, this message translates to:
+  /// **'The same page is published at {url}'**
+  String privacyPolicyHostedAddress(String url);
+
+  /// The label for a control that opens the hosted policy in a browser, saying so in the label itself (PERM-16). Written and translated ahead of the control: nothing in the app opens a browser today, PrivacyPolicyScreen.onOpenHosted is null at every call site in lib/, and so this string is drawn nowhere. Kept because PERM-16's condition is about the wording, and a label that has to be written in every language the day someone wires a launcher is a label written in a hurry. Do not read it as evidence the control exists — PERM-16's correction of 23 September 2026 says 'the only thing in the app that does' names nothing.
+  ///
+  /// In en, this message translates to:
+  /// **'Open in your browser (this leaves your phone)'**
+  String get privacyPolicyOpenHosted;
 }
 
 class _AppLocalizationsDelegate

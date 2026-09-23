@@ -53,6 +53,14 @@ class ReplyboxListenerService : NotificationListenerService() {
 
     override fun onListenerConnected() {
         super.onListenerConnected()
+        // PERM-10: recorded here in the callback body and not on [worker]. This is a
+        // volatile field write with no disk and no binder in it, and PERM-10 asks
+        // this question from the platform thread microseconds later on a resume --
+        // routing it through the single-threaded worker would put a reboot's worth of
+        // queued captures in front of the answer and report "not connected" about a
+        // listener that had already said otherwise. The ordering the worker exists to
+        // protect is between *events*, and this is not one.
+        ListenerState.onConnected()
         // PERM-8 opens a capture_sessions row off this, and PERM-9 needs the time to
         // be the one the callback fired at, not the one Dart drained at.
         val now = System.currentTimeMillis()
@@ -89,6 +97,14 @@ class ReplyboxListenerService : NotificationListenerService() {
 
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
+        // PERM-10, and the one write in this file that has to survive a teardown.
+        // `NotificationListenerService.onDestroy` calls this callback, and this
+        // class's own onDestroy shuts the worker down before it reaches super -- so
+        // on that path every `submit` below is refused and only what happens here
+        // lands. That is the right way round: the queue row is a nicety after the
+        // service is gone, while "this process's listener is not bound" is precisely
+        // what the next resume asks about (PERM-10, PERM-8).
+        ListenerState.onDisconnected()
         val now = System.currentTimeMillis()
         submit {
             enqueue(NotificationProjection.lifecycle("listener_disconnected", now))

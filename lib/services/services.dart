@@ -29,6 +29,86 @@ abstract interface class NotificationSource {
   /// Events the listener has queued while Dart was not running, drained on
   /// launch and on resume (CAP-13).
   Stream<Map<String, Object?>> events();
+
+  /// Whether *this app's own* listener service is bound right now (PERM-10).
+  ///
+  /// Three answers, and the third is why this is not a `bool`. True and false
+  /// are things the process has observed — `onListenerConnected` or
+  /// `onListenerDisconnected` fired in this process. Null is "nothing has been
+  /// observed": a run in which neither callback has fired yet, a build with no
+  /// host on the channel, a test. PERM-10's line may only be drawn on
+  /// **false**; a null is the app having learned nothing, exactly as
+  /// [PackagePresence.unknown] is, and drawing the line on it would accuse a
+  /// listener that is merely slow to bind.
+  ///
+  /// It must NOT claim that access is granted or missing. That is [hasAccess]'s
+  /// question and PERM-5 says it is read from the system every time; a
+  /// connected listener is neither necessary nor sufficient evidence about the
+  /// grant. Nor may the answer be persisted anywhere: a stored "it was
+  /// connected" outlives the connection it described, which is the shape of
+  /// claim this whole area exists to stop making (product principle 3).
+  Future<bool?> listenerConnected();
+
+  /// Asks Android to rebind this app's listener (PERM-10).
+  ///
+  /// Returns whether the *request was made*, never whether the listener is now
+  /// connected — the platform reports no outcome, and a true here that was read
+  /// as a connection would put "capture is running" on screen with nothing
+  /// behind it. The caller waits PERM-10's ten seconds and asks
+  /// [listenerConnected] again.
+  ///
+  /// False means the request could not even be made (no host, a throw). It is
+  /// not evidence about the listener either way, and it must NOT be reported to
+  /// the user as a failure of capture.
+  Future<bool> requestListenerRebind();
+}
+
+/// The settings pages PERM-14 points at, and the one fact it is allowed to
+/// print about the phone.
+///
+/// Its own interface rather than three more methods on [NotificationSource]:
+/// none of this is about notifications, and every one of them is a thing the
+/// app can only *offer* — it changes nothing itself, which is the whole of what
+/// PERM-14 is allowed to say. **Nothing here needs a `uses-permission`**
+/// (PERM-15): `Build.MANUFACTURER` is a public field,
+/// `ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS` opens the *list* page and is
+/// unguarded, and `ACTION_APPLICATION_DETAILS_SETTINGS` for this app's own
+/// package is unguarded. The action that *does* need one —
+/// `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` — is not used and PERM-15 forbids it.
+///
+/// What nothing on this interface can prove, and what PERM-14's screen must
+/// therefore never say: that any of these settings keeps this app's listener
+/// alive. The 24-hour OEM survival check did not run (spike, 21 September 2026,
+/// check 3), so the pages are a place to look and not a fix (decision 11).
+abstract interface class SystemSettings {
+  /// `Build.MANUFACTURER`, exactly as the device reported it, or null.
+  ///
+  /// Null where there is nothing to ask or the value is blank. Never a
+  /// substituted "Unknown" string: PERM-14 prints this to the user so an
+  /// unlisted phone is visibly unlisted, and a made-up name would be the app
+  /// telling the user something about their hardware that the hardware did not
+  /// say. It must NOT be normalised here — `batteryGuidanceFor` lower-cases a
+  /// copy for the table lookup and the screen draws this one as-is (LANG-5).
+  ///
+  /// It proves nothing about what the phone does to this app. A manufacturer
+  /// name is a label the device volunteered, not a measurement (PERM-14).
+  Future<String?> manufacturer();
+
+  /// Opens the system's battery-optimisation list page (PERM-14).
+  ///
+  /// Returns whether an activity actually started. False is PERM-7's third
+  /// branch reached again: the caller replaces the control with the written
+  /// path rather than leaving a button that does nothing. It must NOT claim
+  /// that anything about this app's battery treatment changed — a page opening
+  /// is the whole of what a true here means.
+  Future<bool> openBatteryOptimisationSettings();
+
+  /// Opens this package's own app-info page (PERM-14, PERM-15's last clause).
+  ///
+  /// Same contract as above: true means an activity started, and nothing more.
+  /// In particular it is not evidence that the user found anything there, or
+  /// that any exemption was granted — the app never asks for one (PERM-15).
+  Future<bool> openAppInfoSettings();
 }
 
 /// The one thing the chooser has to be able to push down to the listener: the
@@ -551,6 +631,7 @@ class DeviceServices {
     required this.reminders,
     required this.entitlements,
     required this.appLock,
+    required this.systemSettings,
   });
 
   final NotificationSource notifications;
@@ -566,6 +647,9 @@ class DeviceServices {
   final ReminderScheduler reminders;
   final Entitlements entitlements;
   final AppLock appLock;
+
+  /// PERM-14's two settings pages and the manufacturer it prints.
+  final SystemSettings systemSettings;
 }
 
 /// A message the app has composed but not yet confirmed as sent (INB-9).

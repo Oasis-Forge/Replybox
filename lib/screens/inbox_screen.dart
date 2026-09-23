@@ -6,14 +6,18 @@ import 'package:provider/provider.dart';
 import '../l10n/app_localizations.dart';
 import '../models/conversation.dart';
 import '../providers/inbox_provider.dart';
+import '../providers/permissions_provider.dart';
 import '../services/services.dart';
 import '../theme.dart';
 import '../widgets/app_filter_chips.dart';
+import '../widgets/capture_status_line.dart';
 import '../widgets/conversation_row.dart';
 import '../widgets/failure_notice.dart';
 import '../widgets/inbox_empty_states.dart';
 import '../widgets/source_app.dart';
 import '../widgets/swipe_to_reveal.dart';
+import 'battery_guidance_screen.dart';
+import 'disclosure_screen.dart';
 
 /// The conversation list — in v1 the whole first screen (INB-19).
 ///
@@ -22,12 +26,25 @@ import '../widgets/swipe_to_reveal.dart';
 /// a second tab, and no stored selected tab: the rule says the selection is
 /// never stored, and the way to keep that true is to have nothing to store.
 ///
-/// Presentational. It reads [InboxProvider] and calls it; it holds two pieces
-/// of state of its own, and both are about this screen rather than about the
-/// data — which row's swipe is open, and whether a delete's snackbar is up.
+/// Presentational. It reads [InboxProvider] and [PermissionsProvider] and calls
+/// them; it holds two pieces of state of its own, and both are about this
+/// screen rather than about the data — which row's swipe is open, and whether a
+/// delete's snackbar is up.
+///
+/// PERM-13's status line sits above the rows, and the only decision this screen
+/// makes about it is *where it goes*: which of the three lines holds was
+/// resolved by [PermissionsProvider] before this build started, and nothing
+/// here re-ranks them ([CaptureStatusNotice]). The placement itself is PERM-8's
+/// own sentence — the banner draws above the rows where conversations are
+/// stored and replaces INB-15's *Nothing yet* where none are, while PERM-10's
+/// and PERM-11's lines always draw above and leave INB-15's states underneath
+/// (PERM-13) — and [isAccessBanner] is where "which kind of line is this"
+/// is answered, so this screen holds no copy of that mapping either.
 ///
 /// INB-24: nothing here writes a title, a sender, a message or a package
 /// anywhere but to the screen. There is no logging in this file, in any build.
+/// The status line is safe over a locked screen for the same reason INB-15's
+/// empty states are: it says only what the app can and cannot see.
 class InboxScreen extends StatefulWidget {
   const InboxScreen({
     required this.onOpenConversation,
@@ -91,9 +108,56 @@ class _InboxScreenState extends State<InboxScreen> {
   Widget build(BuildContext context) {
     final AppLocalizations l10n = AppLocalizations.of(context);
     final InboxProvider inbox = context.watch<InboxProvider>();
+    final PermissionsProvider permissions = context
+        .watch<PermissionsProvider>();
     // One instant for the whole frame, so every row agrees about what "today"
     // is (INB-1) and two rows a millisecond apart cannot print different days.
+    // The status line is dated from the same instant, so a banner and the rows
+    // under it cannot fall either side of midnight.
     final DateTime now = DateTime.now().toUtc();
+
+    // Built once and placed once. Null where PERM-13 resolved
+    // [CaptureStatusLine.none], which is also what "the app has learned
+    // nothing" looks like — PERM-10 forbids a line on that, and the way to keep
+    // that true here is to have nothing to draw.
+    final Widget? notice = permissions.statusLine == CaptureStatusLine.none
+        ? null
+        : CaptureStatusNotice(
+            line: permissions.statusLine,
+            since: permissions.statusSince,
+            now: now,
+            onOpenDisclosure: () => _open(context, DisclosureScreen.routeName),
+            onOpenGuidance: () =>
+                _open(context, BatteryGuidanceScreen.routeName),
+            onDismissQuiet: () => unawaited(permissions.dismissQuietNotice()),
+            // PERM-11's once-per-twenty-four-hours budget, spent by the line
+            // that reaches a reader rather than by the read that resolved it.
+            // Unawaited for the same reason the two onboarding screens' own
+            // marks are: it is one idempotent settings row, nothing on this
+            // screen reads it back, and the notice reports from `initState` —
+            // which is a build, so this may not be something the screen waits
+            // on (`PermissionsProvider.markQuietNoticeShown`).
+            onQuietShown: () => unawaited(permissions.markQuietNoticeShown()),
+          );
+
+    // PERM-8's second placement. *Nothing yet* is INB-15's claim about the
+    // whole database — not about this filter and not about a failed read — so
+    // it is the empty state's own kind that decides this, and the banner
+    // replaces exactly the state PERM-8 names and no other. PERM-10's and
+    // PERM-11's lines never replace anything: PERM-13 says INB-15's states draw
+    // below them.
+    //
+    // `error == null` is the third clause and it is not defensive: a read that
+    // failed with nothing on screen draws [FailureNotice] *before* the empty
+    // state is consulted, so a banner promised the empty state's place would
+    // simply never be drawn — capture off, and the screen silent about it. With
+    // this it stays at the top and the failure speaks underneath it, which is
+    // two separate facts stated separately rather than one of them swallowed.
+    final bool replacesNothingYet =
+        notice != null &&
+        isAccessBanner(permissions.statusLine) &&
+        inbox.error == null &&
+        inbox.emptyState.kind == InboxEmptyKind.nothingYet;
 
     return Scaffold(
       appBar: AppBar(
@@ -127,14 +191,47 @@ class _InboxScreenState extends State<InboxScreen> {
                 unawaited(inbox.clearFilter());
               },
             ),
-            Expanded(child: _body(context, inbox, now)),
+            // PERM-13: above the rows, below the chips. Below them because the
+            // chips are a control the user set and this is the screen's account
+            // of a state they did not — putting the line above would push a
+            // filter row the user is working in off the top of the screen every
+            // time capture went quiet.
+            if (notice != null && !replacesNothingYet) notice,
+            Expanded(
+              child: _body(
+                context,
+                inbox,
+                now,
+                replacesNothingYet ? notice : null,
+              ),
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _body(BuildContext context, InboxProvider inbox, DateTime now) {
+  /// PERM-1: every route out of this screen towards the grant goes through the
+  /// disclosure, so the banner's action is a `pushNamed` and never a call into
+  /// [PermissionsProvider.openAccessSettings].
+  ///
+  /// Pushed by name here rather than handed up through a callback like
+  /// [InboxScreen.onOpenIncludedApps]: those two callbacks exist because the
+  /// thread and the chooser are pushed with arguments this screen would
+  /// otherwise have to compose. The disclosure and the battery guidance are
+  /// argument-free routes on `MaterialApp.routes`, and routing them through the
+  /// widget's constructor would put two more required parameters on every test
+  /// that builds this screen for a reason that has nothing to do with them.
+  void _open(BuildContext context, String routeName) {
+    unawaited(Navigator.of(context).pushNamed<void>(routeName));
+  }
+
+  Widget _body(
+    BuildContext context,
+    InboxProvider inbox,
+    DateTime now,
+    Widget? bannerInsteadOfNothingYet,
+  ) {
     final AppLocalizations l10n = AppLocalizations.of(context);
     // The spinner is for the cold start only. A read triggered by capture never
     // raises the loading flag (INB-25), and a reload that already has rows
@@ -159,6 +256,24 @@ class _InboxScreenState extends State<InboxScreen> {
       );
     }
     if (inbox.emptyState.isEmpty) {
+      // PERM-8: the banner *replaces* INB-15's *Nothing yet* rather than
+      // sitting above it, so it is drawn here, where that state would have
+      // been, and not at the top of the screen. Two sentences about an empty
+      // inbox is one too many — and the wrong one would be on top, because
+      // *Nothing yet* names the included apps and offers the chooser while
+      // access is off and none of them can post.
+      //
+      // Centred and scrollable like INB-15's own states, for INB-15's own
+      // reason: the longest of these sentences at the 1.3x text scale INB-23
+      // renders at, on a phone, in every language.
+      if (bannerInsteadOfNothingYet != null) {
+        return Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(vertical: Metrics.gutter),
+            child: bannerInsteadOfNothingYet,
+          ),
+        );
+      }
       return InboxEmptyStates(
         state: inbox.emptyState,
         onSeeIncludedApps: () => widget.onOpenIncludedApps(context),

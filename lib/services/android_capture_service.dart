@@ -98,6 +98,33 @@ class AndroidNotificationSource implements NotificationSource, CaptureFilter {
   @override
   Stream<Map<String, Object?>> events() => _sharedCaptureEvents;
 
+  /// PERM-10. Three answers, and the null is carried through rather than
+  /// flattened.
+  ///
+  /// `_invoke` already answers null for a build with no host and for a
+  /// `MissingPluginException`, and the Kotlin side answers `null` when neither
+  /// lifecycle callback has fired in this process (`ListenerState`). Those are
+  /// the same observation — nothing learned — so both reach the caller as null
+  /// and neither is turned into a false. That is the opposite of [hasAccess]
+  /// one method above, and the difference is deliberate: an unanswerable
+  /// `hasAccess` reads as "no access" because the safe direction there is
+  /// claiming *less* about what the app can see, while an unanswerable
+  /// `listenerConnected` read as false would make the app claim *more* — it
+  /// would put `capture is not running right now` on screen on the strength of
+  /// a channel that did not reply (PERM-10, product principle 3).
+  @override
+  Future<bool?> listenerConnected() async => _invoke<bool>('listenerConnected');
+
+  /// PERM-10. True means the rebind was asked for, and nothing more.
+  ///
+  /// An absent answer is false — the request could not be made — which is the
+  /// honest reading and is also spent the same way: PERM-10 waits its ten
+  /// seconds and asks [listenerConnected] again either way, so the two outcomes
+  /// never diverge on screen.
+  @override
+  Future<bool> requestListenerRebind() async =>
+      await _invoke<bool>('requestListenerRebind') ?? false;
+
   /// Everything the listener queued while Dart was not running (CAP-13).
   ///
   /// Draining does not delete: [ackQueue] does, and only for the rows whose
@@ -306,6 +333,58 @@ Future<T?> _invoke<T>(String method, [Object? arguments]) async {
   } on MissingPluginException {
     return null;
   }
+}
+
+/// PERM-14's pages, over the same channel and the same [_invoke] guard.
+///
+/// Not a second channel and not a plugin: all three of these are one-line
+/// Kotlin `when` branches beside the notification-access intents that
+/// `CaptureChannel` already owns, and none of them declares a permission
+/// (PERM-15). Putting them here rather than on [AndroidNotificationSource] is
+/// the interface's own argument repeated in the implementation — a page about
+/// battery is not a fact about notifications, and folding them together would
+/// give a provider that only needs a settings page a handle on the drain.
+///
+/// Every method degrades to [NoopSystemSettings]'s answer off Android with no
+/// guard of its own, because `_invoke` answers null for a build with no host
+/// and for a `MissingPluginException` alike. That matters for the same reason
+/// it matters everywhere else in this file: a `MethodChannel` with nobody on
+/// the other end is the shape of the service that hung the suite for ten
+/// minutes (docs/STACK_NOTES.md).
+class AndroidSystemSettings implements SystemSettings {
+  const AndroidSystemSettings();
+
+  /// `Build.MANUFACTURER`, or null.
+  ///
+  /// The Kotlin side sends `""` for a field that is null or blank, and the
+  /// empty string is mapped to null here rather than drawn: PERM-14 prints this
+  /// into a sentence, and an empty name would render as
+  /// `This phone reports its manufacturer as .` — the app asserting something
+  /// about the hardware that the hardware did not say. The screen's other
+  /// branch (`batteryGuidanceManufacturerUnknown`) exists precisely so a null
+  /// has somewhere honest to go.
+  ///
+  /// Not trimmed or lower-cased here. The value is printed as-is (LANG-5) and
+  /// `batteryGuidanceFor` normalises its own copy for the table lookup, so the
+  /// two never share a mutation.
+  @override
+  Future<String?> manufacturer() async {
+    final String? value = await _invoke<String>('deviceManufacturer');
+    return (value == null || value.isEmpty) ? null : value;
+  }
+
+  /// True only when an activity actually started. An absent answer is false,
+  /// which PERM-14 spends as PERM-7's written path — never as a page the user
+  /// is now looking at.
+  @override
+  Future<bool> openBatteryOptimisationSettings() async =>
+      await _invoke<bool>('openBatteryOptimisationSettings') ?? false;
+
+  /// Same contract, this app's own app-info page (PERM-15's last clause: the
+  /// route that replaces a runtime prompt the system will no longer show).
+  @override
+  Future<bool> openAppInfoSettings() async =>
+      await _invoke<bool>('openAppInfoSettings') ?? false;
 }
 
 /// Replying in place, over the listener's in-memory action map.
@@ -605,11 +684,29 @@ class CaptureSync with WidgetsBindingObserver {
     final List<QueuedCaptureEvent> rows = await _source.drainQueue();
     final List<String> written = <String>[];
     bool changed = seenWritten.isNotEmpty;
+
+    // The newest `postTime` of anything the listener handed over in this pass,
+    // which is PERM-11's clock and not a record of this drain.
+    //
+    // Tracked here rather than in the ingest because PERM-11 counts events of
+    // *any* kind — a message, a removal, a lifecycle callback — and the
+    // ingest's job is deciding which of them become messages (CAP-2, CAP-21).
+    // An event the rules dropped still proves the listener was alive and
+    // delivering at that instant, which is the only thing this clock claims.
+    DateTime? newestEvent;
+
     for (final QueuedCaptureEvent row in rows) {
       try {
-        final IngestOutcome outcome = await _ingest.apply(
-          CaptureEvent.fromJson(row.json),
-        );
+        final CaptureEvent event = CaptureEvent.fromJson(row.json);
+        // Before the apply, deliberately: the event's own time is evidence of
+        // delivery whatever the ingest then does with it, and an ingest that
+        // throws must not also lose the proof that something arrived.
+        final DateTime? postTime = event.postTime;
+        if (postTime != null &&
+            (newestEvent == null || postTime.isAfter(newestEvent))) {
+          newestEvent = postTime;
+        }
+        final IngestOutcome outcome = await _ingest.apply(event);
         // Acked whatever the outcome: an event the rules dropped (CAP-2,
         // CAP-6, CAP-7) or that was already stored (CAP-5) has been dealt
         // with, and a queue that only released stored events would never
@@ -647,6 +744,30 @@ class CaptureSync with WidgetsBindingObserver {
     }
     if (written.isNotEmpty) await _source.ackQueue(written);
     if (changed) _onChanged?.call();
+
+    // PERM-11's clock, written after the ack and guarded like the fault report
+    // below it: a line that says when something last arrived must never be what
+    // stops a drain, and the next pass re-reads the same queue anyway.
+    //
+    // Clamped to now, and the reason is the rule's own sentence. `postTime` is
+    // the source app's clock, not ours; a phone whose clock is a day ahead
+    // would otherwise buy the app twenty-four hours of silence in which
+    // PERM-11's line can never appear. Clamping down is safe in the direction
+    // that matters — it can only make the line appear sooner, never hide it.
+    // `noteCaptureEventAt` refuses to move backwards, so a queue drained out of
+    // order cannot walk the clock down and put the line on a busy phone.
+    if (newestEvent != null) {
+      try {
+        final DateTime now = DateTime.now().toUtc();
+        await _repository.noteCaptureEventAt(
+          newestEvent.isAfter(now) ? now : newestEvent,
+        );
+      } on Object {
+        // The clock falling behind costs PERM-11's line a delay, which the rule
+        // already tolerates — it is a 24-hour window and an explicit guess. A
+        // pass that failed here would cost the user captured messages.
+      }
+    }
 
     // Last, and outside everything above: a fault the listener recorded is a
     // fact about a pass that has already happened, and asking for it must never
