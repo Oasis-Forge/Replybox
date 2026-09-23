@@ -1429,6 +1429,7 @@ DeviceServices _services({
   reminders: const NoopReminderScheduler(),
   entitlements: const NoopEntitlements(),
   appLock: const NoopAppLock(),
+  systemSettings: const NoopSystemSettings(),
 );
 
 /// The thread screen with everything it reaches for above it.

@@ -1178,6 +1178,7 @@ void main() {
         reminders: const NoopReminderScheduler(),
         entitlements: const NoopEntitlements(),
         appLock: const NoopAppLock(),
+        systemSettings: const NoopSystemSettings(),
       );
 
       final AppsProvider apps = AppsProvider(

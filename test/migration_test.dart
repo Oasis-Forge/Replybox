@@ -271,7 +271,11 @@ void main() {
       );
       final Repository repo = Repository(upgraded);
 
-      expect(await (await upgraded.database).getVersion(), 2);
+      // The current version and not the literal `2` this was written with: what
+      // is being asserted is that the open ran every step and stopped at the
+      // top, and pinning the number meant every appended step broke a test
+      // about step 2's data (PERM-9 appended step 3).
+      expect(await (await upgraded.database).getVersion(), schemaVersion);
       expect(
         (await repo.messages(conversation.id)).map((Message m) => m.text),
         <String>['from before the fix', 'and the one after it'],

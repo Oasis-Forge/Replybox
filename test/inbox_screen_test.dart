@@ -27,6 +27,7 @@ import 'package:replybox/models/message.dart';
 import 'package:replybox/models/source_app.dart';
 import 'package:replybox/providers/apps_provider.dart';
 import 'package:replybox/providers/inbox_provider.dart';
+import 'package:replybox/providers/permissions_provider.dart';
 import 'package:replybox/screens/inbox_screen.dart';
 import 'package:replybox/screens/included_apps_screen.dart';
 import 'package:replybox/screens/thread_screen.dart';
@@ -56,9 +57,20 @@ void main() {
     await tester.runAsync(() => write(repo));
   }
 
-  setUp(() {
+  setUp(() async {
     db = testDb();
     repo = Repository(db);
+    // A phone that has been through onboarding. PERM-4 pushes the disclosure
+    // over the first screen without a tap exactly once per install, and this
+    // file pumps `ReplyboxApp` on a fresh database nineteen times — so without
+    // these two stamps every test here would be racing that push, and the list
+    // it is asserting about would be the offstage route underneath it.
+    //
+    // The two facts unlock nothing (PERM-5): they record that two screens were
+    // once displayed. Written here, in the real zone, because a database call
+    // awaited from inside a `testWidgets` body hangs on the faked clock.
+    await repo.markDisclosureShown(DateTime.utc(2026, 9, 1));
+    await repo.markBatteryGuidanceShown(DateTime.utc(2026, 9, 1));
   });
 
   tearDown(() async => db.close());
@@ -1767,7 +1779,18 @@ DeviceServices _services({
   Map<String, SourceAppIdentity> identities =
       const <String, SourceAppIdentity>{},
 }) => DeviceServices(
-  notifications: const NoopNotificationSource(),
+  // Access granted, and stated rather than defaulted. Every rule this file is
+  // about — the rows, the chips, INB-15's empty states — describes a phone
+  // that can see notifications, and with access off PERM-8's banner is the
+  // screen's whole account of the state: it draws above the rows and replaces
+  // *Nothing yet* outright. Leaving the default false would make half of this
+  // file assert INB-15's sentences on a screen the rules say is showing a
+  // different one. Section 9's own screen is `permissions_screens_test.dart`.
+  //
+  // `connected` stays null, which is what a device with no listener to ask has
+  // honestly learned: PERM-10 draws nothing on it, so the list is the whole
+  // screen here (PERM-13).
+  notifications: const NoopNotificationSource(access: true),
   captureFilter: NoopCaptureFilter(),
   packages: NoopPackageInfoService(identities: identities),
   reply: const NoopReplyService(),
@@ -1775,6 +1798,7 @@ DeviceServices _services({
   reminders: const NoopReminderScheduler(),
   entitlements: const NoopEntitlements(),
   appLock: const NoopAppLock(),
+  systemSettings: const NoopSystemSettings(),
 );
 
 /// [count] chips for INB-14's row.
@@ -1853,6 +1877,15 @@ Widget _listAndThread({
         ),
       ChangeNotifierProvider<AppsProvider>(
         create: (_) => AppsProvider(repository, services),
+      ),
+      // Section 9's state, in the tree because the screen reads it and the real
+      // app provides it (`lib/main.dart`). Never refreshed here: an unrefreshed
+      // provider answers `CaptureStatusLine.none`, so PERM-13 draws nothing and
+      // every assertion in this file stays a statement about INB-1 to INB-24
+      // rather than about a banner. PERM-8's own placement is asserted in
+      // `permissions_screens_test.dart`, where a refresh is the point.
+      ChangeNotifierProvider<PermissionsProvider>(
+        create: (_) => PermissionsProvider(repository, services),
       ),
     ],
     child: MaterialApp(
@@ -2189,6 +2222,12 @@ Widget _screenHost({
       ),
       ChangeNotifierProvider<AppsProvider>(
         create: (_) => AppsProvider(repository, services),
+      ),
+      // Unrefreshed, for the reason `_listAndThread` gives: PERM-13 resolves
+      // `none` until someone asks the system, so nothing in this file measures
+      // a row's width against a banner it was not written about.
+      ChangeNotifierProvider<PermissionsProvider>(
+        create: (_) => PermissionsProvider(repository, services),
       ),
     ],
     child: MaterialApp(
