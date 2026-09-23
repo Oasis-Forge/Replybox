@@ -1179,6 +1179,24 @@ void main() {
       await tester.pump();
       await tester.runAsync(() async {
         expect(await repository.setting('installed_at'), written);
+      });
+
+      // The app comes down *before* the database it is reading is closed, and
+      // that order is load-bearing rather than tidy. Since section 9 a launch
+      // does more than stamp a date: PERM-5's read runs behind that stamp, and
+      // it is a chain of real SQLite calls started inside the faked clock.
+      // Closing the handle underneath one leaves a query that is never
+      // answered, and sqflite serialises every database in the process behind
+      // one queue — so the six plain tests below this one stopped at their
+      // thirty-second timeout, having never run a statement. Unmounting first
+      // is what `!mounted` after each `await` in `PermissionsProvider` and in
+      // `_ReplyboxAppState` is *for*; the `runAsync` turn after it is where
+      // those awaits finally resume and see it.
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.runAsync(() async {
         await database.close();
       });
     });

@@ -1242,6 +1242,22 @@ class Repository {
 
   // --- settings and sessions -------------------------------------------
 
+  /// The `settings` keys this area writes, named once each.
+  ///
+  /// Constants rather than literals at the call sites, and the reason is the
+  /// shape of the bug they prevent: every one of these is read by one method
+  /// and written by another, and a typo in either half fails silently — the
+  /// write lands under a key nothing reads, the read answers null for ever, and
+  /// PERM-4's once-per-install offer becomes once per launch with no error
+  /// anywhere. `installed_at` keeps its literal because it predates this and is
+  /// read in three places that a merged branch already tests.
+  ///
+  /// All four store `timeToDb(at).toString()`, like `installed_at`.
+  static const String _disclosureShownAtKey = 'disclosure_shown_at';
+  static const String _batteryGuidanceShownAtKey = 'battery_guidance_shown_at';
+  static const String _quietNoticeShownAtKey = 'quiet_notice_shown_at';
+  static const String _lastCaptureEventAtKey = 'last_capture_event_at';
+
   Future<String?> setting(String key) async {
     final Database db = await _database;
     final List<Map<String, Object?>> rows = await db.query(
@@ -1454,10 +1470,25 @@ class Repository {
   }
 
   /// Closes any open capture session: the listener went away, and said so.
+  ///
+  /// **The end is exact, and the row now says so** (PERM-9). This method is
+  /// only ever reached from the `listener_disconnected` ingest, which is the
+  /// listener reporting its own disconnection inside that callback with that
+  /// callback's own time — so `ended_at` is the instant capture stopped and not
+  /// a bound on it, and PERM-8's banner may say "since" rather than "since at
+  /// least".
+  ///
+  /// There is deliberately **no flag argument**, here or on
+  /// [closeOpenCaptureSessionsAtLastEvidence]. The caller does not get to
+  /// decide which observation it was: the method it called *is* the
+  /// observation, and a parameter would let one caller write "exact" about a
+  /// time it had guessed — which is the single claim PERM-9 and product
+  /// principle 3 exist to make impossible.
   Future<void> closeCaptureSession(DateTime at) async {
     final Database db = await _database;
     await db.update('capture_sessions', <String, Object?>{
       'ended_at': timeToDb(at),
+      'ended_is_estimate': 0,
       'updated_at': timeToDb(at),
     }, where: 'ended_at IS NULL');
   }
@@ -1518,6 +1549,13 @@ class Repository {
         'capture_sessions',
         <String, Object?>{
           'ended_at': timeToDb(endedAt),
+          // PERM-9: the end is unknown and the stored value is the last thing
+          // the app can prove, so the row says so and PERM-8's banner reads
+          // "since at least". Written here rather than derived from the two
+          // timestamps below, because that derivation is wrong in both
+          // directions — see `_step3CaptureSessionEndIsEstimate`, which had to
+          // use it once as a backfill and says why it stops being a signal.
+          'ended_is_estimate': 1,
           // The capture clock, which is ours and is not the instant being
           // claimed (REC-1). The two are different on purpose here: the row
           // says capture stopped at `ended_at` and that we noticed at `now`.
@@ -1529,6 +1567,187 @@ class Repository {
       closedAt = endedAt;
     }
     return closedAt;
+  }
+
+  /// PERM-8's banner, in one read: the newest closed capture window and which
+  /// observation closed it (PERM-9).
+  ///
+  /// Null means no window has ever been closed, which PERM-8's third branch
+  /// reads as "access has never been granted since install" and answers with
+  /// `installed_at`. It is deliberately not conflated with "there is no window
+  /// open": a running app has an open row and a closed history at the same
+  /// time, and a reader that asked "is anything open" would draw the
+  /// never-on banner over a phone that has been capturing all week.
+  ///
+  /// `estimated` is read from the column and never re-derived from
+  /// `updated_at`; `_step3CaptureSessionEndIsEstimate` argues why that
+  /// derivation is wrong in both directions and why it was used exactly once,
+  /// as a backfill.
+  ///
+  /// Ordered by `ended_at` and not by `updated_at` or `created_at`: "newest
+  /// closed" is a question about when capture stopped, and the other two are
+  /// the app's own clocks (REC-1). Deleted rows are excluded like everywhere
+  /// else (DEL-1).
+  Future<({DateTime endedAt, bool estimated})?>
+  newestClosedCaptureSession() async {
+    final Database db = await _database;
+    final List<Map<String, Object?>> rows = await db.query(
+      'capture_sessions',
+      columns: <String>['ended_at', 'ended_is_estimate'],
+      where: 'ended_at IS NOT NULL AND deleted_at IS NULL',
+      orderBy: 'ended_at DESC',
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return (
+      endedAt: timeFromDb(rows.first['ended_at']),
+      estimated: boolFromDb(rows.first['ended_is_estimate']),
+    );
+  }
+
+  /// When the listener last bound (PERM-11's second clock).
+  ///
+  /// `MAX(started_at)` over live rows, or null if it has never bound.
+  ///
+  /// PERM-11 measures its twenty-four hours from the newest of this and
+  /// [lastCaptureEventAt], and this half is what stops a fresh bind reading as
+  /// silence: a phone whose listener connected ten minutes ago has delivered
+  /// nothing yet and is not quiet, it is new. Note what it cannot prove — that
+  /// the listener is still bound. It is the start of a window, not a
+  /// heartbeat; [NotificationSource.listenerConnected] is the only thing that
+  /// answers "now", and PERM-5's discipline is that the platform's state comes
+  /// from the platform.
+  Future<DateTime?> lastListenerConnectedAt() async {
+    final Database db = await _database;
+    final int? latest = Sqflite.firstIntValue(
+      await db.rawQuery(
+        'SELECT MAX(started_at) FROM capture_sessions WHERE deleted_at IS NULL',
+      ),
+    );
+    return latest == null ? null : timeFromDb(latest);
+  }
+
+  /// The newest event the listener has delivered, by the event's own time
+  /// (PERM-11, product principle 3).
+  ///
+  /// Never the time a drain ran, and that distinction is the whole reason this
+  /// is stored rather than computed from `messages`. PERM-11 counts events of
+  /// **any** kind — a message, a removal, a lifecycle callback — and most of
+  /// them never become a row (CAP-2, CAP-21), so `MAX(sent_at)` over `messages`
+  /// would report a phone whose every notification the rules dropped as
+  /// silent. A drain timestamp would report the opposite: the app would say
+  /// something arrived at 8am because that is when it looked, for a message
+  /// posted at 3am.
+  ///
+  /// Null until an event has been applied.
+  Future<DateTime?> lastCaptureEventAt() =>
+      _settingInstant(_lastCaptureEventAtKey);
+
+  /// Records an event's own time, and only ever forward.
+  ///
+  /// Writes nothing when [at] is not after what is stored, so a queue drained
+  /// out of order cannot walk this clock backwards and put PERM-11's line on a
+  /// phone that is busy. One drain applies a burst in whatever order the rows
+  /// come off the queue, and CAP-5's alignment is explicit that a notification's
+  /// history can carry entries older than ones already stored — so out of order
+  /// is the normal case here and not a fault.
+  ///
+  /// The caller bounds [at] by now (`CaptureSync._syncOnce`); a source app with
+  /// a clock in the future must not buy the app twenty-four hours of silence in
+  /// which PERM-11's line can never appear.
+  ///
+  /// Read-then-write rather than one statement, because the value is a string
+  /// in `settings` and SQLite cannot compare it as a number without a cast that
+  /// would silently succeed on anything. Not a transaction, and it does not
+  /// need to be: `CaptureSync` never overlaps two passes, and the failure a
+  /// race would cause is this clock being one event stale for one pass, which
+  /// PERM-11 already tolerates by measuring in days.
+  Future<void> noteCaptureEventAt(DateTime at) async {
+    final DateTime? stored = await _settingInstant(_lastCaptureEventAtKey);
+    if (stored != null && !at.isAfter(stored)) return;
+    await setSetting(_lastCaptureEventAtKey, timeToDb(at).toString());
+  }
+
+  // --- onboarding facts (PERM-4, PERM-5, PERM-11, PERM-14) --------------
+  //
+  // Three facts, each a read and a write, and every one of them records
+  // something *this app did* — never something the platform did. PERM-5 is
+  // explicit about what may not be stored: no flag saying access was granted,
+  // none saying the system page was opened, none saying the user was sent to
+  // settings, and nothing that unlocks a screen. `hasAccess()` is read from the
+  // system on every cold start and every resume and from nothing else, so there
+  // is no key here for it to be cached in and no code path that could grow one.
+
+  /// When the disclosure was first actually on screen, or null (PERM-4, PERM-5).
+  ///
+  /// It governs the one automatic offer per install and nothing else. PERM-1 is
+  /// explicit that a tap the user made is never suppressed by a stored flag, so
+  /// neither the banner's action nor the Settings row may read this — the state
+  /// layer consults it only to decide whether to push the screen unasked.
+  Future<DateTime?> disclosureShownAt() =>
+      _settingInstant(_disclosureShownAtKey);
+
+  /// Records that the disclosure was on screen (PERM-5). Idempotent: the first
+  /// value stands and no later call moves it.
+  ///
+  /// Idempotent rather than last-write-wins because the stamp answers "has this
+  /// install ever seen it", and a screen that is reachable from Settings will
+  /// be shown again — rewriting the date each time would make the first offer
+  /// look like it had just happened.
+  Future<void> markDisclosureShown(DateTime at) =>
+      _setSettingInstantOnce(_disclosureShownAtKey, at);
+
+  /// When the battery guidance was shown, or null (PERM-14).
+  Future<DateTime?> batteryGuidanceShownAt() =>
+      _settingInstant(_batteryGuidanceShownAtKey);
+
+  /// Records that the guidance was shown, and never that the grant was made
+  /// (PERM-14). Idempotent, for the reason [markDisclosureShown] is.
+  ///
+  /// The distinction is the rule's own: a process killed while the user is on
+  /// the system page has not seen the guidance, so it gets it on the next
+  /// launch. A flag that recorded the grant instead would swallow it.
+  Future<void> markBatteryGuidanceShown(DateTime at) =>
+      _setSettingInstantOnce(_batteryGuidanceShownAtKey, at);
+
+  /// When PERM-11's quiet line was last shown, or null.
+  Future<DateTime?> quietNoticeShownAt() =>
+      _settingInstant(_quietNoticeShownAtKey);
+
+  /// Stamps PERM-11's quiet line as shown, **every time** (PERM-11).
+  ///
+  /// The one write here that is not idempotent, and it is the exception the
+  /// rule asks for: "at most once in any 24 hours" is a rolling window, so the
+  /// stamp has to move or the line would show once per install and never again.
+  /// A relaunch inside the window reads this and stays quiet, which is what
+  /// makes the limit survive a process death rather than living in a field.
+  Future<void> markQuietNoticeShown(DateTime at) =>
+      setSetting(_quietNoticeShownAtKey, timeToDb(at).toString());
+
+  /// One stored instant, or null where the key is missing or unreadable.
+  ///
+  /// Every caller tolerates null, so an unparseable value is read as "not
+  /// recorded" rather than thrown: the value is the app's own writing, a parse
+  /// failure means the row is corrupt, and the honest answer to "when was this
+  /// shown" is then that the app does not know. For [disclosureShownAt] that
+  /// costs one extra offer of a screen, which is the safe direction — the
+  /// alternative is a crash on launch over a flag.
+  Future<DateTime?> _settingInstant(String key) async {
+    final String? stored = await setting(key);
+    if (stored == null) return null;
+    final int? parsed = int.tryParse(stored);
+    return parsed == null ? null : timeFromDb(parsed);
+  }
+
+  /// Writes [at] under [key] only if nothing is there (PERM-4, PERM-14).
+  ///
+  /// The read and the write are one method so the two can never disagree, which
+  /// is the failure a caller doing it by hand would produce silently: a screen
+  /// that stamped on every build would reset the date every launch and the
+  /// once-per-install offer would be once per launch.
+  Future<void> _setSettingInstantOnce(String key, DateTime at) async {
+    if (await setting(key) != null) return;
+    await setSetting(key, timeToDb(at).toString());
   }
 
   // --- capture ----------------------------------------------------------

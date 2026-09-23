@@ -26,6 +26,12 @@ import '../services/services.dart';
 import '../widgets/failure_notice.dart';
 import '../widgets/source_app.dart';
 import '../widgets/source_app_row.dart';
+// For their `routeName` constants alone: this screen is the app's Settings
+// (§h), so it is where PERM-1's, PERM-14's and PERM-16's screens are reached
+// from. Nothing here constructs any of them — `MaterialApp.routes` does.
+import 'battery_guidance_screen.dart';
+import 'disclosure_screen.dart';
+import 'privacy_policy_screen.dart';
 
 class IncludedAppsScreen extends StatefulWidget {
   const IncludedAppsScreen({super.key});
@@ -215,20 +221,12 @@ class _IncludedAppsScreenState extends State<IncludedAppsScreen>
             else
               Expanded(
                 child: ListView.builder(
-                  // One past the rows: the last item is INB-21's permanent line.
+                  // One past the rows: the last item is INB-21's permanent
+                  // line and, under it, §h's three Settings rows ([_Footer]).
                   itemCount: shown.length + 1,
                   itemBuilder: (BuildContext context, int index) {
                     if (index == shown.length) {
-                      return Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 24, 16, 24),
-                        child: Text(
-                          // INB-21: why an app the user expected is missing —
-                          // permanent, so an absent app reads as a stated limit
-                          // rather than as a bug (product principle 3).
-                          l10n.includedAppsMissingNote,
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                      );
+                      return _Footer(l10n: l10n);
                     }
                     final IncludedApp app = shown[index];
                     return SourceAppRow(
@@ -386,5 +384,85 @@ class _IncludedAppsScreenState extends State<IncludedAppsScreen>
         ),
       ),
     );
+  }
+}
+
+/// What the list ends with: INB-21's permanent note, and the three rows that
+/// make this screen the app's Settings (PERM-14, §h of the build spec).
+///
+/// There is no Settings screen. INB-20's chooser is what Settings is in this
+/// version, so it is where PERM-14's "it stays reachable from Settings" lands,
+/// and with it PERM-1's Settings row and PERM-16's policy. When RUN-3's setup
+/// page exists these three move to it; until then a second screen holding one
+/// of them would be a second Settings.
+///
+/// `ListTile`s and not `ButtonStyleButton`s, for the reason `_IncludedAppsButton`
+/// on the inbox is an `InkResponse`: INB-15 gives each empty state exactly one
+/// action, and three more buttons at the foot of a screen that can run out of
+/// rows is precisely the count that rule is about. A `ListTile` is a row in a
+/// list, which is what these are — and it carries INB-23's 48dp target and a
+/// real sentence for a screen reader without either being added by hand.
+///
+/// Below the note rather than above it: the note explains the list the user is
+/// looking at, and a block of navigation between the last row and its own
+/// explanation would separate the two.
+class _Footer extends StatelessWidget {
+  const _Footer({required this.l10n});
+
+  final AppLocalizations l10n;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 24, 16, 24),
+          child: Text(
+            // INB-21: why an app the user expected is missing — permanent, so
+            // an absent app reads as a stated limit rather than as a bug
+            // (product principle 3).
+            l10n.includedAppsMissingNote,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ),
+        const Divider(height: 1),
+        // PERM-1's Settings row. It opens the **disclosure**, never the system
+        // page: PERM-1 says the disclosure is the only route inside the app to
+        // that page, and that no stored flag ever suppresses it on a tap the
+        // user made. Nothing here reads `shouldShowDisclosure` — that getter
+        // governs the automatic offer alone — so this row works identically on
+        // the first launch and on the thousandth, before a decline and after
+        // one.
+        ListTile(
+          title: Text(l10n.permissionsDisclosureTitle),
+          onTap: () => _open(context, DisclosureScreen.routeName),
+        ),
+        // PERM-14: "it stays reachable from Settings". The same screen
+        // PERM-10's and PERM-11's lines offer, reached without waiting for
+        // either of them to hold.
+        ListTile(
+          title: Text(l10n.batteryGuidanceTitle),
+          onTap: () => _open(context, BatteryGuidanceScreen.routeName),
+        ),
+        // PERM-16: the policy ships inside the app and is read inside it, so
+        // reaching it makes no network request — and neither does anything on
+        // the screen this opens. This comment used to end "the control that
+        // leaves the phone is on that screen and is labelled as doing exactly
+        // that", which named a control that has never been built: PERM-16 took
+        // its own dated correction on 23 September 2026 saying "the only thing
+        // in the app that does" names nothing, and the policy screen shows the
+        // hosted address as selectable text instead. Nothing this row reaches
+        // leaves the phone.
+        ListTile(
+          title: Text(l10n.privacyPolicyTitle),
+          onTap: () => _open(context, PrivacyPolicyScreen.routeName),
+        ),
+      ],
+    );
+  }
+
+  void _open(BuildContext context, String routeName) {
+    unawaited(Navigator.of(context).pushNamed<void>(routeName));
   }
 }

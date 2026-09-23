@@ -866,6 +866,7 @@ DeviceServices _services({
   reminders: const NoopReminderScheduler(),
   entitlements: const NoopEntitlements(),
   appLock: const NoopAppLock(),
+  systemSettings: const NoopSystemSettings(),
 );
 
 /// The screen with what it reads above it.

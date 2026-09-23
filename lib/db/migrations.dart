@@ -15,6 +15,7 @@ typedef MigrationStep = Future<void> Function(Transaction txn);
 const List<MigrationStep> migrationSteps = <MigrationStep>[
   _step1CaptureTables,
   _step2MessageIdentityIsContent,
+  _step3CaptureSessionEndIsEstimate,
 ];
 
 /// The schema version a fresh install lands on.
@@ -339,5 +340,62 @@ Future<void> _step2MessageIdentityIsContent(Transaction txn) async {
   await txn.execute('''
     CREATE INDEX idx_messages_notification
       ON messages (notification_key, sent_at DESC, history_index DESC)
+  ''');
+}
+
+/// Step 3: which observation closed a capture window (PERM-9, PERM-8).
+///
+/// **Why this is a column and not a derivation.** PERM-9 says the row records
+/// which observation closed it, and nothing already stored can answer that. The
+/// only signal the two close paths happen to leave behind is
+/// `updated_at > ended_at`, and it fails in both directions: a session whose
+/// newest evidence lands on the same millisecond as the discovery reads as
+/// exact, and any later touch of the row — a retention sweep, a restore, a
+/// backfill — turns a window the app *could* stand behind into one it says
+/// "since at least" about. REC-1 makes `updated_at` the app's own capture clock
+/// and nothing else, so reading a rule off it is borrowing a column that has
+/// another job.
+///
+/// The direction of the error is what makes this worth a schema version.
+/// PERM-8's two sentences are not interchangeable: "since" is a claim about an
+/// instant, "since at least" is a claim about a bound. CAP-12 may not be wrong
+/// in the direction of claiming more coverage than the app can prove, and a
+/// mis-derived flag does exactly that.
+///
+/// An appended step rather than a change to step 2, unlike the two things that
+/// were folded into step 2 on 21 September 2026. That folding had a reason
+/// which does not apply here: those changes needed a CHECK and a column list
+/// changed, which SQLite can only do by rebuilding the table, and step 2 was
+/// already rebuilding `messages` for CAP-5. This is a plain `ADD COLUMN` on a
+/// table nothing else in this step touches, so it costs one schema version and
+/// no rebuild. Steps 1 and 2 are untouched.
+Future<void> _step3CaptureSessionEndIsEstimate(Transaction txn) async {
+  // `ALTER TABLE ... ADD COLUMN` with `NOT NULL DEFAULT 0` is legal in SQLite
+  // and rewrites nothing: no CHECK is added and no other column list changes,
+  // so step 2's table-rebuild dance is not repeated here.
+  await txn.execute('''
+    ALTER TABLE capture_sessions
+      ADD COLUMN ended_is_estimate INTEGER NOT NULL DEFAULT 0
+  ''');
+  // The backfill, and the reason it is not just the default. A row a previous
+  // build closed through closeOpenCaptureSessionsAtLastEvidence *was* an
+  // estimate, and the default of 0 would make PERM-8 say "since" for a time the
+  // app cannot stand behind — the one direction CAP-12 may not be wrong in. The
+  // old code is the only witness left: the reported close wrote
+  // updated_at = ended_at, and the discovery close wrote updated_at = now with
+  // ended_at at the last evidence, which is strictly earlier in every case a
+  // device actually produced. Where the two happen to be equal the row keeps 0,
+  // which is the same answer that build already gave. This is a one-time read
+  // of a signal that stops being a signal here: from now on the column is
+  // written directly and updated_at goes back to meaning only what REC-1 says.
+  //
+  // Nothing else about a row moves. No `ended_at`, no `started_at`, no row
+  // count: the flag records how a window ended and never re-dates one (DEL-1,
+  // CAP-12), and the upgrade test asserts that as its own assertion rather than
+  // trusting this comment.
+  await txn.execute('''
+    UPDATE capture_sessions
+       SET ended_is_estimate = 1
+     WHERE ended_at IS NOT NULL AND updated_at > ended_at
   ''');
 }

@@ -6,10 +6,12 @@ import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.service.notification.NotificationListenerService
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
@@ -211,6 +213,35 @@ class CaptureChannel private constructor(private val context: Context) :
                     )
                 }
 
+            // PERM-10, and the whole answer is that it may be null. There is no
+            // public "is my listener connected" API, so this hands over what this
+            // process has observed through the two lifecycle callbacks and nothing
+            // more: true, false, or null for "neither has fired here yet"
+            // (ListenerState says at length what each one does and does not know).
+            //
+            // `ListenerState.connected` is passed straight through and is never
+            // collapsed -- no `?: false`, no `== true`. A null read as a false is
+            // PERM-10's line drawn over a listener that is merely slow to bind, on a
+            // first resume, which is the one failure that rule is written against;
+            // a null read as a true would be the app claiming capture is running on
+            // no evidence at all. Both directions are wrong, so the third value
+            // crosses the channel as a third value and the state layer decides.
+            "listenerConnected" -> result.success(ListenerState.connected)
+
+            // PERM-10's one action. Boolean, never an error result: the rule spends
+            // "the request was made" and "it could not even be made" the same way --
+            // it waits ten seconds and asks `listenerConnected` again -- so a second
+            // failure shape here would only give the Dart side something to collapse
+            // back into false.
+            //
+            // **No rate limiting lives in this file, deliberately.** PERM-10's
+            // at-most-one-request-per-resume and 60-second floor are enforced in
+            // `PermissionsProvider.refresh` (`lib/providers/permissions_provider.dart`),
+            // because one refresh is one resume and only the state layer knows where
+            // a resume began; a clock in here would count calls instead and would
+            // quietly disagree with the line the user is shown.
+            "requestListenerRebind" -> result.success(requestListenerRebind())
+
             "drainQueue" -> result.success(queue.drain())
 
             "ackQueue" -> {
@@ -307,6 +338,48 @@ class CaptureChannel private constructor(private val context: Context) :
             // Counts and times only -- never a package and never a payload.
             "captureFaults" -> result.success(CaptureFaults.snapshot())
 
+            // PERM-14: the one fact the app prints about the phone, and the only
+            // thing this channel ever reads off `Build`. A public field, no
+            // permission (PERM-15), and no other device identifier goes with it --
+            // not the model, not the fingerprint, not the serial, none of which the
+            // rule asks for and any of which would start identifying the handset
+            // rather than describing its make.
+            //
+            // Empty string rather than null across the channel, because the Dart
+            // side already maps "" to null and a method channel's null is
+            // indistinguishable from "no host answered" (`_invoke` returns null off
+            // Android and on MissingPluginException). The screen's two branches are
+            // "the device reported this" and "the device reported nothing", and both
+            // have to survive a build with no platform behind it.
+            "deviceManufacturer" -> result.success(reportedManufacturer(Build.MANUFACTURER))
+
+            // PERM-14's first page: the system's battery-optimisation *list*, which
+            // is unguarded. ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS -- the one
+            // that asks for the exemption directly -- needs
+            // REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, and PERM-15 forbids it, so it
+            // appears nowhere in this build and PERM-14 offers a page to look at
+            // instead of a switch to flip. The app changes nothing about its own
+            // battery treatment and says so.
+            //
+            // Answers through the same `start()` as PERM-7, so a page that does not
+            // exist is a false rather than a throw, and the screen replaces the
+            // control with the written path.
+            "openBatteryOptimisationSettings" ->
+                result.success(start(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)))
+
+            // PERM-14's second page: this package's own app-info screen, which is
+            // also unguarded for one's own package. `Uri.fromParts` rather than
+            // `Uri.parse("package:" + ...)`: fromParts builds an opaque URI with the
+            // package as its scheme-specific part and encodes it, so nothing about
+            // the string can be read as a path. It names this app and no other --
+            // PERM-14 never offers to open a page about somebody else's app.
+            "openAppInfoSettings" -> result.success(
+                start(
+                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                        .setData(Uri.fromParts("package", context.packageName, null)),
+                ),
+            )
+
             else -> result.notImplemented()
         }
     }
@@ -356,6 +429,47 @@ class CaptureChannel private constructor(private val context: Context) :
             if (start(detail)) return true
         }
         return start(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+    }
+
+    /**
+     * PERM-10: asks Android to bind this app's listener again.
+     *
+     * `NotificationListenerService.requestRebind(ComponentName)` is static, arrived
+     * in API 24 (minSdk is 24, so it is always there) and needs **no permission**
+     * (PERM-15): the system checks that the component belongs to the calling app and
+     * that the user has approved it, which is a grant this app already holds or does
+     * not, never one it asks for here.
+     *
+     * The component is [listenerComponent], the same one `hasAccess` compares
+     * against and the same one PERM-7's detail intent carries. Asking for a rebind
+     * of anything else is not a thing this app has any business doing, and the
+     * platform refuses it anyway.
+     *
+     * ## What the true means, and what it does not
+     *
+     * True is "the request was made", and that is all it may ever be read as. The
+     * platform reports no outcome: a rebind is asynchronous, `onListenerConnected`
+     * is the only thing that ever says it worked, and a true here that was read as a
+     * connection would put "capture is running" on screen with nothing behind it
+     * (product principle 3). PERM-10 therefore waits its ten seconds and asks
+     * `listenerConnected` again.
+     *
+     * False is "the request could not even be made", which is not evidence about the
+     * listener in either direction and must not be reported to the user as a failure
+     * of capture. `RuntimeException` is the whole catch on purpose: the call rethrows
+     * a dead system server from the binder as an unchecked exception, and the two
+     * plausible refusals -- a `SecurityException` for a component the caller does not
+     * own, an `IllegalArgumentException` for one that cannot be resolved -- are both
+     * subclasses of it, so naming them separately would only look more thorough.
+     */
+    private fun requestListenerRebind(): Boolean = try {
+        NotificationListenerService.requestRebind(listenerComponent())
+        true
+    } catch (e: RuntimeException) {
+        // Nothing logged, and nothing to log: the answer is the return value, this
+        // path names no package and carries no payload (INB-24), and a listener the
+        // phone would not rebind is PERM-10's line rather than a fault report.
+        false
     }
 
     /**
@@ -412,6 +526,55 @@ class CaptureChannel private constructor(private val context: Context) :
         /** The two argument names of `setEnabledPackages`; the Dart side sends both. */
         const val ARG_ENABLED = "enabled"
         const val ARG_KNOWN = "known"
+
+        /**
+         * `android.os.Build.UNKNOWN`'s value, written out rather than referenced.
+         *
+         * The platform substitutes this literal for any build property that was
+         * never set, `ro.product.manufacturer` included, and the emulator the app
+         * is driven on is one of the devices that leaves it unset. Referenced as
+         * `Build.UNKNOWN` it would be a constant the unit-test classpath's stub
+         * `android.jar` can answer null for, so the test that proves the mapping
+         * would be proving it against null -- the failure mode CaptureLogTest
+         * describes, a check that quietly stops matching. It has not moved since
+         * API 1 and `SettingsRoutesTest` is what holds the pairing.
+         */
+        private const val UNREPORTED = "unknown"
+
+        /**
+         * `Build.MANUFACTURER` as PERM-14 may print it, or `""` for "the device
+         * reported nothing".
+         *
+         * Trimmed, and otherwise passed through exactly: not lower-cased, not
+         * title-cased, not looked up in a list of real names. PERM-14 prints this to
+         * the user so that an unlisted phone is *visibly* unlisted, and anything
+         * this function invented would be the app telling someone something about
+         * their hardware that the hardware did not say. The lower-casing PERM-14
+         * asks for belongs to the table lookup, which takes a copy
+         * (`batteryGuidanceFor`, `lib/data/battery_guidance.dart`), and never to the
+         * string the screen draws (LANG-5).
+         *
+         * ## Why the platform's own "unknown" is answered as nothing
+         *
+         * `Build.MANUFACTURER` is not nullable on a device: where the property was
+         * never set the framework hands back the literal [UNREPORTED]. Passing that
+         * through would put *This phone reports its manufacturer as unknown* on
+         * screen -- the app printing a placeholder as though it were a make, which
+         * is the one thing PERM-14's manufacturer line exists not to do. It is also
+         * not hypothetical: it is what an emulator commonly reports, and the
+         * emulator is the only hardware this app has been driven on (spike,
+         * 21 September 2026).
+         *
+         * So the platform's placeholder is mapped to the app's own absence and
+         * PERM-14's second branch says *This phone did not report a manufacturer*,
+         * which is exactly what happened. Matched case-insensitively against the
+         * whole trimmed value and nothing looser: a make whose name merely contains
+         * the word is a real make and is printed.
+         */
+        internal fun reportedManufacturer(reported: String?): String {
+            val trimmed = reported?.trim().orEmpty()
+            return if (trimmed.equals(UNREPORTED, ignoreCase = true)) "" else trimmed
+        }
 
         /** Called from MainActivity.configureFlutterEngine. */
         fun register(engine: FlutterEngine, context: Context) {
