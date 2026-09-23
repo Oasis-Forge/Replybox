@@ -2,6 +2,8 @@
 
 _Run 21 September 2026. Emulator only. Go/no-go is **provisional**: the two checks that can stop the product are not answered yet._
 
+_Added 23 September 2026: "Emulator only" describes the run above and no longer describes the whole file. One later section, **What the phone of 23 September 2026 settled**, records a physical phone. Nothing above that heading was observed on hardware, and no result is promoted into it._
+
 The five checks are defined in `docs/PLAN.md` section 5. This file records what was run, on what, and what came back. The raw captures are in `docs/research/spike-dumps/`, one file per case and one JSON object per notification event, and `tool/spike.sh` reruns every step.
 
 | Dump | Case |
@@ -89,6 +91,33 @@ The spike above was a throwaway listener in the debug source set. On the same da
 - Check 3 stays **not run**, and stays a stop condition. There is still no OEM device and still no 24 hours of an unopened app.
 - **No provisional mark comes off.** Every rule marked provisional under CAP-25 stays marked. CAP-25 says a mark comes off with a dated result on hardware; this is a dated result on an emulator, which is the thing CAP-25 was written to distinguish.
 
+## What the phone of 23 September 2026 settled
+
+Everything above this line ran on an emulator. This section is the first time any of it ran on a physical Android phone, and it is deliberately short, because very little was driven.
+
+A debug-signed release APK of 0.2.0, built from `main` at commit 185425a — the Inbox merge, with no Permissions work in it — was installed on a phone. Notification access was granted **by hand, on the system's own notification-access page**. A real WhatsApp notification then arrived and was drawn as a row in the inbox list.
+
+| | |
+|---|---|
+| Device | a physical Android phone. Manufacturer, model and Android version were not recorded — which is why this run says nothing about check 3, where the manufacturer is the whole question |
+| Build | `0.2.0`, release APK, debug-signed, from `main` at 185425a |
+| Real messaging app | WhatsApp, registered on this phone. The first of the six the plan names to post a notification at this listener anywhere |
+| How access was granted | by hand in system settings. That build has no route to that page, and the user reached it only because they were told which page to open |
+| Dump pulled | none. Nothing was written to `spike-dumps/`, so there is no fixture and no field-level record of what WhatsApp's notification contained |
+
+**What is answered.** A notification from a real, unmodified WhatsApp reaches the **shipped** listener, survives CAP-1's filter as a shipped default, passes through the hand-over queue and the Dart normaliser, and is drawn as an inbox row. Until today every app in the shipped six was a guess made from Google Messages, and the emulator could not register any of them (see *What it ran on*, above). That is now one observed app, on hardware.
+
+**What is not answered, and the list has barely moved.**
+
+- Whether a reply sent from the app lands in the WhatsApp chat. Nothing was replied to. **Check 1 stays partial** — it is a check about reply actions round-tripping, and the round trip was not run.
+- Signal, Messenger and Instagram. Two of those three are stop conditions and neither was installed. Telegram likewise.
+- **Check 3 stays not run**, and stays a stop condition. No 24 hours elapsed with the app unopened, and the manufacturer was not even written down.
+- Work-profile notifications (PERM-17). Not tested, not set up.
+
+**What no mark may be taken off for.** No dump was pulled, so what this notification actually held — its `shortcutId`, its `EXTRA_MESSAGES`, its actions — was never recorded. The evidence is a row on a screen, not a field in a file. Any CAP-25 mark that rests on a *field* still rests on the emulator.
+
+**One observation that is not about capture at all.** Before access was granted, the app captured nothing and said nothing whatsoever about why: an empty screen, no explanation, no route to the page that would fix it. The user got there because they were told. That is the Permissions area's justification, observed rather than argued, and it is recorded here because this is the only place it was seen.
+
 ## Go / no-go
 
 **Provisional go, on the framework.** Everything the Android APIs are responsible for behaved as the product needs: `MessagingStyle` history survives bursts, `RemoteInput` round-trips, held actions outlive their notifications, redaction degrades to a marker rather than a crash.
@@ -96,6 +125,8 @@ The spike above was a throwaway listener in the debug source set. On the same da
 **Not a go on the product question**, which is whether the six messaging apps people actually use post repliable notifications, and whether a listener stays alive for a day on a phone that is trying to kill it. Checks 1 and 3 are the two stop conditions in the plan and both need hardware that does not exist here yet.
 
 Nothing in Phase 2 should be treated as unblocked on the strength of this file alone. What it does unblock is the *shape* of the code: the dump format below is stable enough for PR 2's normaliser to be written against.
+
+**Correction, 23 September 2026.** The paragraph above says both stop conditions "need hardware that does not exist here yet". Hardware now exists — the phone run of 23 September is recorded above. The verdict is unchanged anyway, and it is worth being exact about why: check 1 needed a reply to land in a real chat and no reply was sent, and check 3 needed a day of elapsed time on a named OEM and got neither. What did change is the one sentence about the six apps: one of them has now posted a notification that became a row. That is a go on nothing; it is the first hardware evidence this file has ever carried.
 
 ## What the fixtures look like
 
@@ -107,10 +138,10 @@ Fields chosen for what the normaliser needs, not for readability: `key`, `packag
 
 In one sitting, on a real phone with real accounts:
 
-1. Register WhatsApp, Signal, Messenger, Instagram and Telegram. Post one message to each, dump it, and record whether a reply sent through the notification actually lands in the chat. That is check 1, properly.
-2. Record each app's conversation key — shortcut ID, conversation title, tag — since the plan flags this as the thing that decides how threads are identified.
-3. Capture a photo message and a voice note per app, which no check covers but which the normaliser has to survive.
-4. Leave the listener bound on an OEM device for 24 hours with the app unopened, then check delivery. That is check 3.
-5. Note whether work-profile notifications reach the listener at all.
+1. Register WhatsApp, Signal, Messenger, Instagram and Telegram. Post one message to each, dump it, and record whether a reply sent through the notification actually lands in the chat. That is check 1, properly. — **partly done, 23 September 2026, and only the first clause of it**: WhatsApp was registered and one of its notifications became an inbox row. No dump was taken, no reply was sent, and the other four apps were not installed. The item stays open.
+2. Record each app's conversation key — shortcut ID, conversation title, tag — since the plan flags this as the thing that decides how threads are identified. — open. The 23 September run pulled no dump, so WhatsApp's key was never read.
+3. Capture a photo message and a voice note per app, which no check covers but which the normaliser has to survive. — open.
+4. Leave the listener bound on an OEM device for 24 hours with the app unopened, then check delivery. That is check 3. — open, and the 23 September run did not even record the manufacturer.
+5. Note whether work-profile notifications reach the listener at all. — open (PERM-17).
 
-Until then, treat every rule written from this file as provisional on checks 1 and 3.
+Hardware arrived on 23 September 2026 and four and a half of these five are still untouched, so the sentence below is unchanged: treat every rule written from this file as provisional on checks 1 and 3.

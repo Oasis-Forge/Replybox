@@ -63,10 +63,19 @@ jobs:
           retention-days: 7
 
       # GitHub Pages publishes every file in docs/, on the domain the store listing
-      # points at. This fails when a doc is neither excluded nor declared public.
-      - name: Check what GitHub Pages would publish
+      # points at. The first check fails when a doc is neither excluded nor declared
+      # public. The second (PERM-16) fails when the one doc that IS published stops
+      # quoting the app's own three claims word for word — the published policy and
+      # the permission screen saying different things is the drift nobody notices.
+      #
+      # Both in one step on purpose: the branch protection ruleset requires exactly
+      # two check names, and a third job would be added to the workflow without
+      # being required, which un-gates it silently.
+      - name: Check what GitHub Pages would publish, and the policy's quoted claims
         if: ${{ !cancelled() }}
-        run: bash scripts/check_public_docs.sh
+        run: |
+          bash scripts/check_public_docs.sh
+          bash scripts/check_policy_claims.sh
 
       # The rule IDs are the spine of the method and nothing else checks them. An
       # ID cited but defined nowhere is a typo or a renumbering, and fails; a rule
