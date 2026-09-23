@@ -1,6 +1,7 @@
 package com.oasisforge.replybox.capture
 
 import android.app.Notification
+import android.app.PendingIntent
 import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Context
@@ -15,8 +16,9 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
 /**
- * CAP-14's reply-action map: notification key to the action that can answer it,
- * held for the life of the process and past the notification's own dismissal.
+ * CAP-14's reply-action map: notification key to what this process still holds for
+ * that notification, kept for the life of the process and past the notification's
+ * own dismissal.
  *
  * A top-level object rather than a companion on the listener service, because a
  * companion is reached through the service class and it is one careless field away
@@ -25,6 +27,15 @@ import io.flutter.plugin.common.MethodChannel
  * which is a token into the system process, and RemoteInputs, which are parcelable
  * descriptions. That is also why the map cannot be persisted and why a cold start
  * legitimately falls back to "open in app" (CAP-14, INB-13).
+ *
+ * ## Why the content intent lives in this map and not beside it
+ *
+ * INB-13 says `Open chat` fires the notification's own content intent "from the
+ * same in-memory map that holds CAP-14's reply actions", and that is one map here
+ * rather than two on purpose. Two parallel maps would evict independently, so a
+ * key could keep its reply action and lose its content intent -- the thread would
+ * then draw `Open chat` from [canReplyTo] and have nothing to fire. One entry, one
+ * eviction, one lifetime.
  */
 object ReplyActions {
 
@@ -38,22 +49,75 @@ object ReplyActions {
      */
     private const val MAX_ENTRIES = 200
 
-    private val actions = object : LinkedHashMap<String, Notification.Action>(16, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Notification.Action>): Boolean =
+    /**
+     * One notification's live handles: the action that can answer it (CAP-14) and
+     * the intent that opens it where it lives (INB-13). Either may be absent --
+     * a notification can carry a reply action and no content intent, or the
+     * reverse -- and absent is what both readers below answer with.
+     */
+    private class Held {
+        var action: Notification.Action? = null
+        var contentIntent: PendingIntent? = null
+    }
+
+    private val held = object : LinkedHashMap<String, Held>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Held>): Boolean =
             size > MAX_ENTRIES
     }
 
     @Synchronized
     fun remember(notificationKey: String, action: Notification.Action) {
-        actions[notificationKey] = action
+        entry(notificationKey).action = action
+    }
+
+    /**
+     * INB-13's `Open chat` half of the same entry.
+     *
+     * Written by `ReplyboxListenerService.capture`, beside the `remember` above and
+     * for every notification that survives CAP-1's filter. It was dead for one
+     * release, and what that cost is worth stating: a content intent is the **only**
+     * way this app can open a source app the manifest's `<queries>` does not declare
+     * -- it needs no package visibility, while `getLaunchIntentForPackage` answers
+     * null for an undeclared package and INB-20 keeps `QUERY_ALL_PACKAGES` out of
+     * the build. Without the writer, every app that joined the inbox by posting a
+     * notification (INB-20's second source) had a control that could never open
+     * anything.
+     */
+    @Synchronized
+    fun rememberContentIntent(notificationKey: String, contentIntent: PendingIntent) {
+        entry(notificationKey).contentIntent = contentIntent
     }
 
     /** Read as a use, which is what keeps an open conversation's action in the map. */
     @Synchronized
-    fun canReplyTo(notificationKey: String): Boolean = actions[notificationKey] != null
+    fun canReplyTo(notificationKey: String): Boolean = held[notificationKey]?.action != null
 
     /**
-     * Drops every held action.
+     * Whether `Open chat` can be offered for [notificationKey] (INB-13).
+     *
+     * The label is decided before the tap, so the screen has to be able to ask this
+     * without firing anything -- exactly as [canReplyTo] is asked for the reply
+     * field that will stand in the same place. Asking is also a use, so the
+     * conversation the user is looking at keeps its entry.
+     *
+     * A false here is not "offer the other path anyway": for an undeclared package
+     * there is no other path, and INB-16 is what the screen says instead.
+     */
+    @Synchronized
+    fun hasContentIntent(notificationKey: String): Boolean = held[notificationKey]?.contentIntent != null
+
+    /**
+     * The content intent held for [notificationKey], or null (INB-13).
+     *
+     * Also read as a use, for the same reason: the conversation the user is
+     * looking at is the one whose entry should survive the next two hundred
+     * notifications.
+     */
+    @Synchronized
+    fun contentIntentFor(notificationKey: String): PendingIntent? = held[notificationKey]?.contentIntent
+
+    /**
+     * Drops everything held.
      *
      * CAP-14 makes repliability a property of this run, and the listener being
      * disconnected ends that run's claim on it: capture has stopped (PERM-8), so an
@@ -61,11 +125,18 @@ object ReplyActions {
      * telling this process about any more. PERM-8 requires the fallback to "open in
      * app" while access is missing, and this is what makes it true rather than
      * asserted. A reconnection rebuilds the map from what is still posted (CAP-13).
+     *
+     * INB-13's `Open chat` goes with it, and must: a content intent held over a
+     * disconnection is a label promising a chat this process is no longer being
+     * told anything about.
      */
     @Synchronized
     fun clear() {
-        actions.clear()
+        held.clear()
     }
+
+    /** The entry for [notificationKey], created empty if this is its first handle. */
+    private fun entry(notificationKey: String): Held = held.getOrPut(notificationKey) { Held() }
 }
 
 /**
@@ -117,6 +188,9 @@ class CaptureChannel private constructor(private val context: Context) :
 
     private val queue: CaptureQueue by lazy { CaptureQueue.of(context) }
     private val store: CaptureStore by lazy { CaptureStore.of(context) }
+
+    /** INB-13's two launch paths, against the real phone (see [AppLaunch]). */
+    private val launchTargets: LaunchTargets by lazy { SystemLaunchTargets(context) }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
@@ -194,6 +268,40 @@ class CaptureChannel private constructor(private val context: Context) :
             }
 
             "canReplyTo" -> result.success(ReplyActions.canReplyTo(call.string().orEmpty()))
+
+            // INB-13: which of the two launches the control may offer, asked before
+            // the tap because the label says which one will run. It is the same
+            // shape as "canReplyTo" and for the same reason -- a screen cannot fire
+            // a path to find out whether it exists.
+            "canOpenChat" -> result.success(
+                ReplyActions.hasContentIntent(call.string().orEmpty()),
+            )
+
+            // INB-13's two launches. Two methods and not one with a mode flag: the
+            // path is decided before the tap, by the label the user read, and a
+            // single method taking "a package or a notification key" is one
+            // refactor away from quietly falling back from one path to the other.
+            //
+            // Both answer a boolean and never an error. INB-13 makes "it threw" and
+            // "there was nothing to start" the same outcome on screen -- one
+            // snackbar, nothing else changed -- so an error here would only give the
+            // Dart side a second shape to collapse back into false.
+            "openChat" -> result.success(
+                AppLaunch.openChat(call.string().orEmpty(), launchTargets),
+            )
+
+            "openApp" -> result.success(
+                AppLaunch.openApp(call.string().orEmpty(), launchTargets),
+            )
+
+            // INB-1, INB-16: one source app's label and icon, and which of the
+            // three things the app is allowed to say about whether it is still
+            // installed. The whole rule is in SourceAppInfo, including the gate
+            // that keeps a package the manifest never declared from reaching the
+            // package manager at all.
+            "lookupPackage" -> result.success(
+                SourceAppInfo.lookup(call.string().orEmpty(), SourceAppInfo.facts(context)),
+            )
 
             // CAP-12, RUN-1: what capture could not do, so a screen can say it.
             // Counts and times only -- never a package and never a payload.

@@ -101,6 +101,27 @@ class CaptureStore private constructor(private val file: File) {
     }
 
     /**
+     * Whether this install has ever seen [packageName] post a notification -- a
+     * read of [everSeen], which [recordSeen] writes before CAP-1's drop and which
+     * nothing ever removes from.
+     *
+     * This is what [SourceAppInfo] gates its package-manager lookups on, and it is
+     * the only thing on this side that answers "has this app already messaged the
+     * user?" It is deliberately *not* [isEnabled]: a package the user switched off
+     * still has conversations in the inbox whose rows need a label, an icon and
+     * INB-16's presence, and INB-22 says turning a row off changes nothing on
+     * screen but the switch.
+     *
+     * Unreadable store answers false for everything, which fails in the safe
+     * direction: no lookup is made and the app says `unknown` (INB-16), rather than
+     * asking the phone about a package it can no longer show it was told about.
+     */
+    fun hasEverSeen(packageName: String): Boolean = synchronized(lock) {
+        load()
+        everSeen.contains(packageName)
+    }
+
+    /**
      * The `apps` rows seen and not yet acknowledged, oldest first.
      *
      * It does **not** clear. Clearing here would destroy the row before Dart had

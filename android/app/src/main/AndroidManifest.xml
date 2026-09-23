@@ -66,10 +66,43 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
-        <!-- INB-16, INB-20: the shipped messaging apps. These are what let the
-             app resolve the label and icon of an app it captures from. This
-             list must stay in step with lib/data/shipped_apps.dart and with
-             ShippedApps.PACKAGES in
+        <!-- INB-13, INB-16 (developer decision, 22 September 2026): every app
+             that has a launcher icon.
+
+             Without this, `getLaunchIntentForPackage` answered null for every
+             package outside the six below, so INB-13's `Open <app>` was a
+             control that failed every time for exactly the apps INB-20's second
+             source is made of - the ones that joined the inbox by posting a
+             notification. The same visibility is what lets INB-16 tell
+             `installed` from `gone` for those apps instead of withholding both.
+
+             What it widens, stated rather than left to be found. Android now
+             makes every launchable app *visible* to this process: a package
+             manager lookup for one of them resolves instead of throwing. That
+             is not QUERY_ALL_PACKAGES (which is still absent, and which
+             tool/check_queries.sh and RUN-2's gate both fail on), it needs no
+             permission, and it enumerates nothing on its own - PackageManager
+             answers one named package at a time and only when it is asked.
+
+             So what keeps the app from reading the phone's app list is a rule
+             in code, not this element: SourceAppInfo.lookup refuses any package
+             that is neither named below nor one this install's CaptureStore has
+             already seen post a notification, and SourceAppInfoTest fails if
+             that gate is weakened. The privacy policy says both halves - what
+             the app can see, and what it chooses to ask (CAP-27). -->
+        <intent>
+            <action android:name="android.intent.action.MAIN"/>
+            <category android:name="android.intent.category.LAUNCHER"/>
+        </intent>
+        <!-- INB-16, INB-20: the shipped messaging apps. Still named one by one
+             even though the filter above already makes them visible, because
+             the two declarations do different work. The filter covers an app
+             while it has a launcher activity; these entries cover these six
+             whatever shape they are in, which is what makes a NameNotFound for
+             one of them mean "uninstalled" and nothing else - and PERM-3's
+             disclosure resolves their labels before any of them has posted.
+             This list must stay in step with lib/data/shipped_apps.dart and
+             with ShippedApps.PACKAGES in
              android/app/src/main/kotlin/com/oasisforge/replybox/capture/ShippedApps.kt,
              which is the copy CAP-1's native filter defaults on. PERM-3 fails
              if any package can start enabled whose label the disclosure never

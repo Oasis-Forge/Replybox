@@ -47,12 +47,12 @@ class OwnPackageGuardTest {
 
     @Test
     fun `the own-package drop is the first statement of both entry points`() {
-        assertEquals(emptyList(), firstStatementComplaints(listenerSource().readText()))
+        assertEquals(emptyList(), firstStatementComplaints(listenerText()))
     }
 
     @Test
     fun `the drop carries no condition`() {
-        assertEquals(emptyList(), unconditionalComplaints(listenerSource().readText()))
+        assertEquals(emptyList(), unconditionalComplaints(listenerText()))
     }
 
     /**
@@ -70,7 +70,7 @@ class OwnPackageGuardTest {
      */
     @Test
     fun `the checks reject every weakening of the drop`() {
-        val source = listenerSource().readText()
+        val source = listenerText()
         val survivors = mutableListOf<String>()
         for ((name, mutant) in mutants(source)) {
             val complaints = firstStatementComplaints(mutant) + unconditionalComplaints(mutant)
@@ -269,6 +269,21 @@ class OwnPackageGuardTest {
             "SpikeRawPoster",
             "SpikeListenerService",
         )
+
+        /**
+         * The listener's source with its line endings normalised, which is what
+         * every check below reads.
+         *
+         * [mutants] already did this for itself and said why; the two complaint
+         * functions did not, and one of them looks at a line's tail:
+         * `if \(sbn\.packageName == packageName\)[^\n]*` takes the `\r` of a CRLF
+         * checkout with it, so the guard it found never equalled [GUARD] and the
+         * whole file was red on Windows while being green on the runner. A test
+         * that only passes where nobody is looking at it is worse than no test:
+         * the one thing PERM-12's guard cannot afford is a check the person
+         * editing the listener has learnt to ignore.
+         */
+        fun listenerText(): String = listenerSource().readText().replace("\r\n", "\n")
 
         fun listenerSource(): File =
             File(androidAppDir(), "src/main/kotlin/com/oasisforge/replybox/capture/ReplyboxListenerService.kt")
