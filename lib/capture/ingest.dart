@@ -309,11 +309,17 @@ class CaptureIngest {
       at: now,
       // The candidates are stored beside the resolved key so an app that
       // changes its keying is migrated rather than split silently (CAP-3).
-      // Emptied and absent are one value here, because INB-2 says the app
-      // cannot tell which it is looking at.
-      shortcutId: _nonEmpty(event.shortcutId),
-      conversationTitle: _nonEmpty(event.conversationTitle),
-      tag: _nonEmpty(event.tag),
+      // Emptied and absent are one value here, because CAP-3 says a `""` is a
+      // field redaction emptied and so no candidate at all.
+      //
+      // [_present] and not [_nonEmpty], the same predicate [_resolveKey] reads
+      // its candidates with — these columns are the record of what that
+      // resolver saw, and a column that disagreed with the key beside it would
+      // be a stored row lying about its own identity, which is the one thing a
+      // keying migration reads first (CAP-3).
+      shortcutId: _present(event.shortcutId),
+      conversationTitle: _present(event.conversationTitle),
+      tag: _present(event.tag),
     );
 
     // The whole history goes down in one call, and it has to. CAP-5 identifies
@@ -501,18 +507,21 @@ class CaptureIngest {
 
   /// CAP-3, in order. `groupKey` is not a candidate and never will be: one
   /// covered three separate threads in the spike's dumps.
+  ///
+  /// Reads its candidates with [_present] and never with [_nonEmpty] — see
+  /// [_present] for why the difference is a stored conversation's identity.
   _ResolvedKey _resolveKey(CaptureEvent event, String notificationKey) {
     // Which of shortcutId and conversationTitle wins is provisional (CAP-25):
     // no notification the spike captured carried both.
-    final String? shortcutId = _nonEmpty(event.shortcutId);
+    final String? shortcutId = _present(event.shortcutId);
     if (shortcutId != null) {
       return (key: shortcutId, source: KeySource.shortcutId);
     }
-    final String? conversationTitle = _nonEmpty(event.conversationTitle);
+    final String? conversationTitle = _present(event.conversationTitle);
     if (conversationTitle != null) {
       return (key: conversationTitle, source: KeySource.conversationTitle);
     }
-    final String? tag = _nonEmpty(event.tag);
+    final String? tag = _present(event.tag);
     if (tag != null) {
       return (key: tag, source: KeySource.tag);
     }
@@ -549,10 +558,28 @@ class CaptureIngest {
   /// the other way costs a message the app was handed and can never get back,
   /// and destroying one of those is the worse error every time (CAP-5's
   /// correction, 21 September 2026).
+  ///
+  /// **Correction, 22 September 2026.** The name fields are read with
+  /// [_emptiedOrAbsent] and not with [_nonEmpty], because those answer two
+  /// different questions and only one of them is CAP-8's. INB-2 asks "is there
+  /// a name to draw?", so it folds a title of one space to nothing — correctly:
+  /// a space draws as a blank row. This asks "did Android empty this field?",
+  /// and a title of one space is a title that was *present*. Both are true of
+  /// the same notification and they are not in conflict. Sharing [_nonEmpty]
+  /// between them made a MessagingStyle notification with a title of `" "`, an
+  /// emptied sender and real words classify as hidden: the words were stored as
+  /// null and the user was told their phone had hidden a message it had not
+  /// hidden. That is the destructive direction this predicate is not allowed to
+  /// err in.
   bool _isHidden(CaptureEvent event, CapturedMessage entry) =>
       entry.senderEmptied &&
-      _nonEmpty(event.title) == null &&
-      _nonEmpty(event.selfDisplayName) == null &&
+      _emptiedOrAbsent(event.title) &&
+      _emptiedOrAbsent(event.selfDisplayName) &&
+      // The text stays on INB-2's reading, and it is the one place here that
+      // should be: "while its text is not empty" is asking whether there is
+      // anything worth keeping, and a text of one space is not. Being stricter
+      // here only ever classifies fewer messages as hidden, which is the safe
+      // direction (CAP-8).
       _nonEmpty(entry.text) != null;
 
   /// CAP-8 on CAP-21's path, where there is no message history to read.
@@ -575,9 +602,20 @@ class CaptureIngest {
   /// whose title arrives absent instead of emptied is indistinguishable from an
   /// ordinary untitled one, and is kept as a raw message (CAP-25 — this is
   /// measured on one app at one API level).
+  ///
+  /// **Correction, 22 September 2026.** Both halves of CAP-8 now read "emptied"
+  /// the same way, through [_emptied] and [_emptiedOrAbsent]: a field Android
+  /// emptied holds nothing at all, and a field holding a space is a field the
+  /// app filled in. The literal `event.title == ''` written here was already
+  /// that reading; [_isHidden] had drifted off it, so one notification shape
+  /// could be hidden on this path and not on that one. The two paths still
+  /// differ in what *absence* buys, and deliberately: here the title is the
+  /// only evidence there is, so an absent one proves nothing, while on the
+  /// history path the emptied sender is the discriminator and the title only
+  /// corroborates it.
   bool _isRawHidden(CaptureEvent event) =>
-      event.title == '' &&
-      _nonEmpty(event.selfDisplayName) == null &&
+      _emptied(event.title) &&
+      _emptiedOrAbsent(event.selfDisplayName) &&
       _nonEmpty(event.text) != null;
 
   /// CAP-9: an attachment is stored as its type code, never as the rendered
@@ -642,10 +680,67 @@ class CaptureIngest {
 /// CAP-21's three categories, and only these three.
 const Set<String> _rawCategories = <String>{'msg', 'social', 'email'};
 
-/// CAP-3 treats `""` as absent, because redaction empties title fields and the
-/// app cannot tell an emptied field from one that was never set (INB-2).
+/// INB-2's question: **is there a name to draw?**
+///
+/// A value with nothing visible in it is an absence: a title of one space or
+/// one zero-width space is not a name, and storing it as one puts a blank row
+/// on screen — the gap INB-2 exists to close. So this folds anything [isBlank]
+/// calls blank, and it is the predicate every field read for display or for
+/// comparison goes through: the title, a raw notification's title and text, an
+/// attachment's MIME type, the names INB-9 compares to decide a direction.
+///
+/// It is **not** CAP-3's question. See [_present].
 String? _nonEmpty(String? value) =>
+    (value == null || isBlank(value)) ? null : value;
+
+/// CAP-3's question: **did the notification supply this candidate at all?**
+///
+/// `""` or absent, literally, which is what CAP-3 says: redaction empties a
+/// title field, so an emptied one is no candidate and the app cannot tell an
+/// emptied field from one that was never set (INB-2). A value that merely
+/// *draws* as nothing — one space, one zero-width space — is a value the app
+/// chose to send and a perfectly serviceable identifier, because a key's job is
+/// identity and not display. Nothing renders it; it is matched against.
+///
+/// **Correction, 22 September 2026.** This was [_nonEmpty] until INB-2 widened
+/// that one to [isBlank], and the widening silently took CAP-3's resolver with
+/// it. A conversation already stored under a key of one space — resolved from a
+/// blank `shortcutId`, `conversationTitle` or `tag` — would, on its next
+/// notification, resolve to the notification key instead and open a **second
+/// thread** beside the first, with the user's history sitting in the one they
+/// can no longer reach. CAP-3 is explicit that a keying change is migrated
+/// rather than split silently, and the candidate columns exist for exactly that
+/// migration; nothing would have caught this one, because the change was in the
+/// resolver rather than in an app.
+///
+/// Splitting the predicate is the fix and not a migration, deliberately: it
+/// restores the resolver to the behaviour CAP-3 has always described, so no
+/// stored `conversation_key` ever resolved differently and there is nothing to
+/// migrate. A migration would have had to rewrite keys that were never wrong.
+String? _present(String? value) =>
     (value == null || value.isEmpty) ? null : value;
+
+/// CAP-8's question, which is not [_nonEmpty]'s.
+///
+/// [_nonEmpty] asks whether there is a name to draw, so it folds anything that
+/// draws as nothing — a space, a zero-width space — to absence. This asks
+/// whether **Android emptied the field**, which is a question about what
+/// arrived and not about what it looks like: redaction replaces a value with
+/// `""`, and `org.json` drops a null key entirely, so an emptied field is
+/// present and holds no character at all.
+///
+/// A space is therefore not emptied. It is a value some app chose to send, and
+/// the only honest thing to conclude from it is that the notification was not
+/// redacted. Folding the two questions into one predicate is what destroyed
+/// message text (CAP-8's correction, 22 September 2026), so they stay apart:
+/// the same notification can carry a title with no name to draw (INB-2) and a
+/// title that was plainly present (CAP-8), and both readings are right.
+bool _emptied(String? value) => value == '';
+
+/// [_emptied], or the key never arrived. Used where an emptied field only
+/// corroborates evidence that is carried by another field, and so where
+/// absence is allowed to count as "carries no name" (CAP-8).
+bool _emptiedOrAbsent(String? value) => value == null || _emptied(value);
 
 typedef _ResolvedKey = ({String key, KeySource source});
 

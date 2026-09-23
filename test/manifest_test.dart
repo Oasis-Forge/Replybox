@@ -133,6 +133,129 @@ void main() {
     });
   });
 
+  group('INB-16, INB-20 what <queries> declares (decision 13)', () {
+    /// The body of the `<queries>` element, comments removed.
+    ///
+    /// Comments have to go first here more than anywhere else in this file: the
+    /// element now carries a long note that writes out `QUERY_ALL_PACKAGES`,
+    /// `getInstalledApplications` and `queryIntentActivities` by name, to say
+    /// that the app declares and calls none of them. A raw-text assertion would
+    /// fail on the paragraph explaining why the thing it forbids is absent.
+    String queries() {
+      final RegExpMatch? match = RegExp(
+        r'<queries\b[^>]*>(.*?)</queries>',
+        dotAll: true,
+      ).firstMatch(withoutComments(manifest));
+      expect(
+        match,
+        isNotNull,
+        reason:
+            'No <queries> element in ${manifest.path}. INB-16 puts the app\'s '
+            'whole package visibility in it, so a missing element is not a '
+            'narrower app — it is every source app back to INB-16\'s `unknown` '
+            'and INB-13\'s control gone from every thread.',
+      );
+      return match!.group(1)!;
+    }
+
+    test('QUERY_ALL_PACKAGES is declared nowhere', () {
+      // Decision 13 widened visibility with a `<queries>` filter, which needs
+      // no permission and shows nothing on the store page. This permission is
+      // the thing that was never on the table: it would make INB-16's third
+      // state unreachable and turn the "only ever asks about a package that has
+      // already posted" restraint into decoration, because there would be
+      // nothing left the app could not see. RUN-2's release gate fails on any
+      // uses-permission, but this names the one that matters here so a failure
+      // reads as the rule it broke.
+      expect(
+        withoutComments(manifest),
+        isNot(contains('QUERY_ALL_PACKAGES')),
+        reason:
+            '${manifest.path} declares QUERY_ALL_PACKAGES (INB-20, decision '
+            '13). The app asks about one named package at a time and never for '
+            'a list; this permission is how that stops being true.',
+      );
+    });
+
+    test('the launcher intent filter decision 13 bought is still there', () {
+      // The developer took this trade deliberately on 22 September 2026: every
+      // launchable app becomes visible, and INB-13's `Open <app>` starts
+      // working for the apps INB-20's second source is made of — the ones that
+      // joined the inbox by posting. Lost in an edit, `getLaunchIntentForPackage`
+      // silently answers null for all of them again and every thread outside
+      // the six falls back to INB-16's `unknown`. Nothing throws and no other
+      // gate notices.
+      final String body = queries();
+      final RegExpMatch? launcher =
+          RegExp(r'<intent\b[^>]*>(.*?)</intent>', dotAll: true)
+              .allMatches(body)
+              .cast<RegExpMatch?>()
+              .firstWhere(
+                (RegExpMatch? m) =>
+                    m!.group(1)!.contains('android.intent.action.MAIN'),
+                orElse: () => null,
+              );
+      expect(
+        launcher,
+        isNotNull,
+        reason:
+            'No <intent> naming android.intent.action.MAIN inside <queries> in '
+            '${manifest.path} (INB-13, INB-16, decision 13).',
+      );
+      expect(
+        launcher!.group(1),
+        contains('android.intent.category.LAUNCHER'),
+        reason:
+            'The MAIN <intent> in <queries> carries no LAUNCHER category, so it '
+            'declares nothing: MAIN without a category matches no app the user '
+            'could tap (decision 13).',
+      );
+    });
+
+    test('the six packages are still named one by one beside the filter', () {
+      // The filter covers an app *while it has a launcher activity*; these six
+      // entries cover these six whatever shape they are in. That is what makes
+      // a NameNotFound for one of them mean "uninstalled" and nothing else
+      // (INB-16), and what lets PERM-3's disclosure resolve their labels before
+      // any of them has posted. test/shipped_apps_test.dart pins which six;
+      // this pins that the filter did not quietly replace them.
+      final String body = queries();
+      final List<String> declared = RegExp(
+        r'<package\s+android:name="([^"]+)"',
+      ).allMatches(body).map((RegExpMatch m) => m.group(1)!).toList();
+      expect(
+        declared,
+        hasLength(6),
+        reason:
+            'INB-20: six `<package>` entries, one per shipped messaging app. '
+            'Found: $declared. A launcher <intent> is not a substitute for '
+            'them (INB-16).',
+      );
+    });
+
+    test('<queries> declares no third filter nobody decided on', () {
+      // Two intents and no more: the Flutter engine's PROCESS_TEXT entry, which
+      // was here before any of this, and decision 13's launcher filter. A third
+      // one would widen what this process can see without a decision, a rule or
+      // a line in the privacy policy — and, like the two above, it would need no
+      // permission and show nothing on the store page (CAP-27, INB-20).
+      final List<String> intents = RegExp(
+        r'<intent\b[^>]*>(.*?)</intent>',
+        dotAll: true,
+      ).allMatches(queries()).map((RegExpMatch m) => m.group(1)!).toList();
+      expect(intents, hasLength(2), reason: 'INB-20: found $intents');
+      expect(
+        intents.where(
+          (String i) => i.contains('android.intent.action.PROCESS_TEXT'),
+        ),
+        hasLength(1),
+        reason:
+            'The PROCESS_TEXT entry io.flutter.plugin.text.ProcessTextPlugin '
+            'needs is gone from <queries>.',
+      );
+    });
+  });
+
   group('CAP-24 the data extraction rules', () {
     /// The body of `<cloud-backup>` or `<device-transfer>`, comments removed.
     String section(String name) {

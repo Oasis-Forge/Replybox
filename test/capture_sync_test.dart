@@ -24,7 +24,7 @@ import 'package:replybox/db/repository.dart';
 import 'package:replybox/models/conversation.dart';
 import 'package:replybox/models/message.dart';
 import 'package:replybox/models/source_app.dart';
-import 'package:replybox/providers/inbox_provider.dart';
+import 'package:replybox/providers/apps_provider.dart';
 import 'package:replybox/services/android_capture_service.dart';
 import 'package:replybox/services/noop_services.dart';
 import 'package:replybox/services/services.dart';
@@ -645,7 +645,14 @@ void main() {
     });
   });
 
-  group('InboxProvider.setAppEnabled pushes CAP-1 filter down (INB-22)', () {
+  // The switch's own provider, not the inbox's: `InboxProvider.setAppEnabled`
+  // was a second copy of this and is gone. What the group covers is unchanged,
+  // because the rule was never about which provider held the method — INB-22
+  // says the switch takes effect from the moment it moves, and the only thing
+  // that can make that true is the screen that moved it telling the listener
+  // so. Mirroring on the next resume is too late in the ON direction: CAP-1
+  // drops what the app posts before then, and dropped there is gone, not late.
+  group('AppsProvider.setEnabled pushes CAP-1 filter down (INB-22)', () {
     late Repository plain;
 
     setUp(() async {
@@ -667,13 +674,9 @@ void main() {
     test('turning a row on tells the listener at once, not at the next '
         'resume', () async {
       final DeviceServices services = noopServices();
-      final InboxProvider provider = InboxProvider(plain, services);
+      final AppsProvider provider = AppsProvider(plain, services);
 
-      await provider.setAppEnabled(
-        'com.example.shopping',
-        enabled: true,
-        now: t0,
-      );
+      await provider.setEnabled('com.example.shopping', enabled: true, now: t0);
 
       // INB-22: the switch takes effect from the moment it moves. Waiting for
       // the next resume means CAP-1 drops what the app posts before then, and
@@ -693,7 +696,7 @@ void main() {
       // What the chooser now draws beside the row.
       expect(
         provider.apps
-            .where((SourceApp a) => a.package == 'com.example.shopping')
+            .where((IncludedApp a) => a.package == 'com.example.shopping')
             .single
             .enabled,
         isTrue,
@@ -702,9 +705,9 @@ void main() {
 
     test('turning a row off pushes a set without it', () async {
       final DeviceServices services = noopServices();
-      final InboxProvider provider = InboxProvider(plain, services);
+      final AppsProvider provider = AppsProvider(plain, services);
 
-      await provider.setAppEnabled('com.whatsapp', enabled: false, now: t0);
+      await provider.setEnabled('com.whatsapp', enabled: false, now: t0);
 
       final NoopCaptureFilter filter =
           services.captureFilter as NoopCaptureFilter;
@@ -714,9 +717,16 @@ void main() {
       // — silent capture in the OFF direction, which is the one CAP-1 and
       // product principle 4 cannot survive.
       expect(filter.lastPushedKnown, contains('com.whatsapp'));
+      // Asserted on the row and not on "no row is enabled": this provider draws
+      // the shipped six whether or not the database holds a row for them
+      // (INB-20), and CAP-1 has the other five on by default, so an emptiness
+      // check here would be a test of the seed rather than of the switch.
       expect(
-        provider.apps.where((SourceApp a) => a.enabled),
-        isEmpty,
+        provider.apps
+            .where((IncludedApp a) => a.package == 'com.whatsapp')
+            .single
+            .enabled,
+        isFalse,
         reason: 'the row and the filter say the same thing',
       );
     });
@@ -725,28 +735,29 @@ void main() {
       final DeviceServices services = DeviceServices(
         notifications: const NoopNotificationSource(),
         captureFilter: _UnreachableCaptureFilter(),
+        packages: const NoopPackageInfoService(),
         reply: const NoopReplyService(),
         launcher: const NoopAppLauncher(),
         reminders: const NoopReminderScheduler(),
         entitlements: const NoopEntitlements(),
         appLock: const NoopAppLock(),
       );
-      final InboxProvider provider = InboxProvider(plain, services);
+      final AppsProvider provider = AppsProvider(plain, services);
 
-      await provider.setAppEnabled(
-        'com.example.shopping',
-        enabled: true,
-        now: t0,
-      );
+      await provider.setEnabled('com.example.shopping', enabled: true, now: t0);
 
       // The switch on screen would otherwise be telling the user something the
       // phone is not doing — silent loss in the ON direction (INB-22).
       expect(provider.error, isNotNull);
+      // Read through `error` above and named here: this is the one failure a
+      // later successful read must not clear, because a capture signal fires
+      // within the second of any app posting anything.
+      expect(provider.captureFilterFailure, isNotNull);
       // The database keeps the write: it is the authority, and the next launch
       // re-mirrors from it.
       expect(
         provider.apps
-            .where((SourceApp a) => a.package == 'com.example.shopping')
+            .where((IncludedApp a) => a.package == 'com.example.shopping')
             .single
             .enabled,
         isTrue,

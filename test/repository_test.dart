@@ -348,11 +348,16 @@ void main() {
 
   group('INB-4 ordering', () {
     test('two reads of tied conversations give the same order', () async {
-      // Ties are real, so the order has to be total.
+      // Ties are real — the spike's fixture delivered five messages under one
+      // identical time — so the order has to be total. Every seeded value is
+      // equal on purpose: `aConversation` puts `last_message_at` and
+      // `created_at` on t0, so the only key left is `id`.
       final Conversation a = aConversation(key: 'a', title: 'A');
       final Conversation b = aConversation(key: 'b', title: 'B');
+      final Conversation c = aConversation(key: 'c', title: 'C');
       await repo.insertConversation(a);
       await repo.insertConversation(b);
+      await repo.insertConversation(c);
 
       final List<String> first = (await repo.conversations())
           .map((Conversation c) => c.id)
@@ -362,6 +367,205 @@ void main() {
           .toList();
 
       expect(first, second);
+      // And the tie-break is the stated one, not whatever SQLite happened to
+      // return: `id` ascending, which no later read can compute differently.
+      expect(first, <String>[a.id, b.id, c.id]..sort());
+    });
+
+    test('a newer conversation sorts above a tie, and the tie still '
+        'breaks by created_at', () async {
+      final DateTime later = t0.add(const Duration(minutes: 5));
+      final Conversation newest = aConversation(
+        key: 'newest',
+        lastMessageAt: later,
+      );
+      // Same `last_message_at`, different `created_at`: the notification for
+      // `secondSeen` reached us later, so it sits above `firstSeen`.
+      final Conversation firstSeen = Conversation(
+        id: 'aaaa-first',
+        package: 'com.whatsapp',
+        conversationKey: 'first',
+        keySource: KeySource.shortcutId,
+        title: 'First',
+        isGroup: false,
+        lastMessageAt: t0,
+        createdAt: t0,
+        updatedAt: t0,
+      );
+      final Conversation secondSeen = Conversation(
+        id: 'zzzz-second',
+        package: 'com.whatsapp',
+        conversationKey: 'second',
+        keySource: KeySource.shortcutId,
+        title: 'Second',
+        isGroup: false,
+        lastMessageAt: t0,
+        createdAt: t0.add(const Duration(minutes: 1)),
+        updatedAt: t0,
+      );
+      await repo.insertConversation(firstSeen);
+      await repo.insertConversation(secondSeen);
+      await repo.insertConversation(newest);
+
+      expect(
+        (await repo.conversations()).map((Conversation c) => c.title),
+        <String>['Ada Lovelace', 'Second', 'First'],
+      );
+    });
+  });
+
+  group('INB-7 thread order', () {
+    test('two notifications sharing one sent_at still read in one order, '
+        'oldest first', () async {
+      // The companion to the INB-4 test above: one `sent_at` across two
+      // notifications, so the order falls through to the arrival order of the
+      // notification, then the position inside it.
+      final Conversation c = aConversation();
+      await repo.insertConversation(c);
+
+      // The older notification, two entries on one instant.
+      await repo.insertMessagesIfNew(<Message>[
+        aMessage(
+          conversationId: c.id,
+          text: 'first',
+          notificationKey: 'notif-a',
+          historyIndex: 0,
+        ),
+        aMessage(
+          conversationId: c.id,
+          text: 'second',
+          notificationKey: 'notif-a',
+          historyIndex: 1,
+        ),
+      ]);
+      // A second notification, same instant, captured afterwards.
+      final DateTime captured = t0.add(const Duration(seconds: 30));
+      await repo.insertMessagesIfNew(<Message>[
+        Message(
+          id: newId(),
+          conversationId: c.id,
+          sender: 'Ada',
+          sentAt: t0,
+          kind: MessageKind.text,
+          direction: Direction.inbound,
+          sendState: SendState.sent,
+          notificationKey: 'notif-b',
+          historyIndex: 0,
+          text: 'third',
+          createdAt: captured,
+          updatedAt: captured,
+        ),
+      ]);
+
+      final List<String?> order = (await repo.messages(
+        c.id,
+      )).map((Message m) => m.text).toList();
+      expect(order, <String>['first', 'second', 'third']);
+      // And the newest read is the other end of that same order, so the
+      // preview and the bottom of the thread can never disagree.
+      expect((await repo.newestMessage(c.id))!.text, 'third');
+    });
+
+    test('deleting the newest message moves the preview back one', () async {
+      final Conversation c = aConversation();
+      await repo.insertConversation(c);
+      await repo.insertMessagesIfNew(<Message>[
+        aMessage(conversationId: c.id, text: 'kept', historyIndex: 0),
+        aMessage(conversationId: c.id, text: 'gone', historyIndex: 1),
+      ]);
+
+      await db.database.then(
+        (Database d) => d.update(
+          'messages',
+          <String, Object?>{'deleted_at': timeToDb(t0)},
+          where: 'text = ?',
+          whereArgs: <Object?>['gone'],
+        ),
+      );
+
+      expect((await repo.newestMessage(c.id))!.text, 'kept');
+    });
+
+    test('a list reads one newest message per conversation', () async {
+      final Conversation ada = aConversation(key: 'ada', title: 'Ada');
+      final Conversation grace = aConversation(
+        key: 'grace',
+        title: 'Grace',
+        lastMessageAt: t0.add(const Duration(minutes: 2)),
+      );
+      await repo.insertConversation(ada);
+      await repo.insertConversation(grace);
+      await repo.insertMessageIfNew(
+        aMessage(conversationId: ada.id, text: 'from ada'),
+      );
+      await repo.insertMessageIfNew(
+        aMessage(
+          conversationId: grace.id,
+          sender: 'Grace',
+          text: 'from grace',
+          notificationKey: 'notif-2',
+          sentAt: t0.add(const Duration(minutes: 2)),
+        ),
+      );
+
+      final Map<String, Message> newest = await repo.newestMessages(
+        await repo.conversations(),
+      );
+      expect(newest[ada.id]!.text, 'from ada');
+      expect(newest[grace.id]!.text, 'from grace');
+    });
+
+    test('a conversation whose last_message_at is past every message it '
+        'holds still has a preview', () async {
+      // `last_message_at` only moves forward, so deleting the newest message
+      // leaves it pointing past everything the thread still holds. A row with
+      // no preview at all is what a user reads as lost data.
+      final Conversation c = aConversation(
+        lastMessageAt: t0.add(const Duration(hours: 1)),
+      );
+      await repo.insertConversation(c);
+      await repo.insertMessageIfNew(
+        aMessage(conversationId: c.id, text: 'still here'),
+      );
+
+      final Map<String, Message> newest = await repo.newestMessages(
+        <Conversation>[c],
+      );
+      expect(newest[c.id]!.text, 'still here');
+    });
+
+    test('a limited read is the newest end of the same order, even where the '
+        'window falls on a tie', () async {
+      // What the thread's bounded read rests on: `limit` keeps the newest
+      // [limit] and drops what is older, still oldest-first, so the window is
+      // a suffix of INB-7's order and never an independently chosen set. The
+      // tie is the case that matters — the spike's burst put five messages on
+      // one instant, so the window's edge can fall inside one.
+      final Conversation c = aConversation();
+      await repo.insertConversation(c);
+      await repo.insertMessagesIfNew(<Message>[
+        aMessage(conversationId: c.id, text: 'oldest', historyIndex: 0),
+        aMessage(conversationId: c.id, text: 'tied with it', historyIndex: 1),
+        aMessage(
+          conversationId: c.id,
+          text: 'newest',
+          historyIndex: 2,
+          sentAt: t0.add(const Duration(minutes: 1)),
+        ),
+      ]);
+
+      expect(
+        (await repo.messages(c.id, limit: 2)).map((Message m) => m.text),
+        <String>['tied with it', 'newest'],
+      );
+      expect(
+        (await repo.messages(c.id, limit: 9)).map((Message m) => m.text),
+        <String>['oldest', 'tied with it', 'newest'],
+        reason: 'a limit past the end changes nothing',
+      );
+      // And the thread's real beginning is still readable, which is what lets
+      // INB-10's notice name a date the window does not reach.
+      expect(await repo.oldestMessageAt(c.id), t0);
     });
   });
 
@@ -414,6 +618,187 @@ void main() {
       );
 
       expect(await repo.unreadCount(c), 0);
+    });
+
+    test('a hidden message is counted by postTime, and two reads agree '
+        '(CAP-8)', () async {
+      final Conversation c = aConversation(readThroughAt: t0);
+      await repo.insertConversation(c);
+
+      // A hidden message carries no text and no time of its own: its arrival
+      // time is the notification's `postTime`, which is the same value INB-4
+      // sorts on, so that is what the count has to compare against.
+      final DateTime postTime = t0.add(const Duration(minutes: 1));
+      await repo.insertMessageIfNew(
+        Message(
+          id: newId(),
+          conversationId: c.id,
+          sender: '',
+          sentAt: postTime,
+          kind: MessageKind.hidden,
+          direction: Direction.inbound,
+          sendState: SendState.sent,
+          notificationKey: 'notif-hidden',
+          historyIndex: 0,
+          timeSource: TimeSource.post,
+          createdAt: postTime,
+          updatedAt: postTime,
+        ),
+      );
+
+      expect(await repo.unreadCount(c), 1);
+      expect(await repo.unreadCount(c), 1);
+    });
+
+    test(
+      'the bulk read gives every row the same count as the single one',
+      () async {
+        final Conversation ada = aConversation(key: 'ada', readThroughAt: t0);
+        final Conversation grace = aConversation(key: 'grace');
+        final Conversation quiet = aConversation(key: 'quiet');
+        for (final Conversation c in <Conversation>[ada, grace, quiet]) {
+          await repo.insertConversation(c);
+        }
+        // One unread for Ada (newer than her marker), two for Grace (no marker
+        // at all), none for the quiet thread.
+        await repo.insertMessageIfNew(
+          aMessage(
+            conversationId: ada.id,
+            text: 'new',
+            sentAt: t0.add(const Duration(minutes: 1)),
+          ),
+        );
+        await repo.insertMessagesIfNew(<Message>[
+          aMessage(
+            conversationId: grace.id,
+            text: 'one',
+            notificationKey: 'g',
+            historyIndex: 0,
+          ),
+          aMessage(
+            conversationId: grace.id,
+            text: 'two',
+            notificationKey: 'g',
+            historyIndex: 1,
+          ),
+        ]);
+
+        final Map<String, int> counts = await repo.unreadCounts();
+        expect(counts[ada.id], await repo.unreadCount(ada));
+        expect(counts[ada.id], 1);
+        expect(counts[grace.id], 2);
+        // Absent rather than zero: callers read it with a `?? 0`.
+        expect(counts.containsKey(quiet.id), isFalse);
+      },
+    );
+
+    test('a deleted conversation is in no count at all', () async {
+      final Conversation c = aConversation();
+      await repo.insertConversation(c);
+      await repo.insertMessageIfNew(
+        aMessage(conversationId: c.id, text: 'unread'),
+      );
+      expect((await repo.unreadCounts())[c.id], 1);
+
+      await repo.deleteConversation(c.id, t0);
+      expect(await repo.unreadCounts(), isEmpty);
+    });
+  });
+
+  group('INB-14 and INB-21 per-package activity', () {
+    test('counts the conversations the list can show, and their newest '
+        'message', () async {
+      final DateTime later = t0.add(const Duration(minutes: 10));
+      await repo.insertConversation(aConversation(key: 'a'));
+      await repo.insertConversation(
+        aConversation(key: 'b', lastMessageAt: later),
+      );
+      await repo.insertConversation(
+        aConversation(package: 'org.telegram.messenger', key: 'c'),
+      );
+
+      final Map<String, PackageActivity> activity = await repo
+          .conversationActivityByPackage();
+      expect(activity['com.whatsapp']!.conversations, 2);
+      expect(activity['com.whatsapp']!.newestMessageAt, later);
+      expect(activity['org.telegram.messenger']!.conversations, 1);
+    });
+
+    test('a conversation inside a pending Undo is out of the count', () async {
+      final Conversation c = aConversation();
+      await repo.insertConversation(c);
+      await repo.deleteConversation(c.id, t0);
+
+      // Out of the count, and so out of the chip row unless something else
+      // holds it open — which is the state layer's question (INB-6, INB-14).
+      expect(await repo.conversationActivityByPackage(), isEmpty);
+    });
+  });
+
+  group('INB-22 removing an app\'s stored messages', () {
+    test('one step takes every conversation from that app, and one Undo '
+        'brings them all back', () async {
+      final Conversation a = aConversation(key: 'a');
+      final Conversation b = aConversation(key: 'b');
+      final Conversation other = aConversation(
+        package: 'org.telegram.messenger',
+        key: 'c',
+      );
+      for (final Conversation c in <Conversation>[a, b, other]) {
+        await repo.insertConversation(c);
+        await repo.insertMessageIfNew(
+          aMessage(conversationId: c.id, text: 'in ${c.conversationKey}'),
+        );
+      }
+
+      final int removed = await repo.deleteConversationsForPackage(
+        'com.whatsapp',
+        t0,
+      );
+      expect(removed, 2);
+      expect(
+        (await repo.conversations()).map((Conversation c) => c.conversationKey),
+        <String>['c'],
+        reason: 'only the app that was asked for',
+      );
+      expect(await repo.messages(a.id), isEmpty);
+
+      await repo.undeleteConversationsForPackage('com.whatsapp', t0);
+      expect(await repo.conversations(), hasLength(3));
+      expect((await repo.messages(a.id)).single.text, 'in a');
+    });
+
+    test('Undo does not restore a message the user had deleted earlier '
+        '(CAP-23)', () async {
+      final Conversation c = aConversation();
+      await repo.insertConversation(c);
+      await repo.insertMessagesIfNew(<Message>[
+        aMessage(conversationId: c.id, text: 'kept', historyIndex: 0),
+        aMessage(
+          conversationId: c.id,
+          text: 'deleted earlier',
+          historyIndex: 1,
+        ),
+      ]);
+
+      final DateTime earlier = t0.subtract(const Duration(hours: 1));
+      await db.database.then(
+        (Database d) => d.update(
+          'messages',
+          <String, Object?>{'deleted_at': timeToDb(earlier)},
+          where: 'text = ?',
+          whereArgs: <Object?>['deleted earlier'],
+        ),
+      );
+
+      await repo.deleteConversationsForPackage('com.whatsapp', t0);
+      await repo.undeleteConversationsForPackage('com.whatsapp', t0);
+
+      expect(
+        (await repo.messages(c.id)).map((Message m) => m.text),
+        <String>['kept'],
+        reason: 'nothing the user deleted ever returns',
+      );
     });
   });
 
@@ -560,6 +945,55 @@ void main() {
         reason: 'capture from this app is on right now',
       );
     });
+
+    test('the switch on a shipped app that has never posted opens its row '
+        '(INB-21, INB-22)', () async {
+      // A shipped app is captured from its first notification (CAP-1), so it
+      // has no `apps` row until it posts — and INB-21 still draws it, with a
+      // working switch. Without a row to write to, that switch moved on screen
+      // and changed nothing on the phone.
+      expect(await repo.appByPackage('com.whatsapp'), isNull);
+
+      await repo.setAppEnabled(
+        'com.whatsapp',
+        enabled: false,
+        at: t0,
+        labelIfNew: 'com.whatsapp',
+      );
+
+      final SourceApp row = (await repo.appByPackage('com.whatsapp'))!;
+      expect(row.enabled, isFalse);
+      expect(await repo.enabledPackages(), isEmpty);
+      expect(
+        Repository.hasNeverPosted(row),
+        isTrue,
+        reason:
+            'the listener has not seen it post, and the row may not '
+            'claim otherwise',
+      );
+
+      // And a real sighting corrects both the label and the claim.
+      await repo.upsertSeenApp(
+        package: 'com.whatsapp',
+        label: 'WhatsApp',
+        enabledIfNew: true,
+        at: t0.add(const Duration(hours: 1)),
+      );
+      final SourceApp seen = (await repo.appByPackage('com.whatsapp'))!;
+      expect(seen.label, 'WhatsApp');
+      expect(Repository.hasNeverPosted(seen), isFalse);
+      expect(
+        seen.enabled,
+        isFalse,
+        reason: 'a sighting never moves a switch the user set',
+      );
+    });
+
+    test('without a label to open one, a switch on an unknown package writes '
+        'nothing', () async {
+      await repo.setAppEnabled('com.example.unknown', enabled: true, at: t0);
+      expect(await repo.appByPackage('com.example.unknown'), isNull);
+    });
   });
 
   group('CAP-12 gaps', () {
@@ -575,6 +1009,116 @@ void main() {
       expect(first, t0);
       expect(again, t0);
     });
+
+    test('reading installed_at for a notice never writes it', () async {
+      // INB-10's notice is a read on a screen. A read that wrote the date it is
+      // about would move the app's own history to whenever a thread was first
+      // opened.
+      expect(await repo.installedAtOrNull(), isNull);
+      expect(await repo.setting('installed_at'), isNull);
+
+      await repo.installedAt(t0);
+      expect(await repo.installedAtOrNull(), t0);
+    });
+
+    test('a rebind at boot is not an absence anyone noticed (INB-10)', () async {
+      // Fifty-nine seconds between one session closing and the next opening:
+      // CAP-12 is explicit that a window interrupted while access stayed on is
+      // one window, and a notice for it would train the user to ignore the one
+      // that matters.
+      await repo.openCaptureSession(t0);
+      await repo.closeCaptureSession(t0.add(const Duration(minutes: 10)));
+      await repo.openCaptureSession(
+        t0.add(const Duration(minutes: 10, seconds: 59)),
+      );
+
+      expect(
+        await repo.captureGaps(now: t0.add(const Duration(hours: 1))),
+        isEmpty,
+      );
+    });
+
+    test('an hour with access off is a gap, newest first', () async {
+      await repo.openCaptureSession(t0);
+      await repo.closeCaptureSession(t0.add(const Duration(minutes: 10)));
+      await repo.openCaptureSession(t0.add(const Duration(hours: 2)));
+      await repo.closeCaptureSession(t0.add(const Duration(hours: 3)));
+      await repo.openCaptureSession(t0.add(const Duration(hours: 5)));
+
+      final List<CaptureGap> gaps = await repo.captureGaps(
+        now: t0.add(const Duration(hours: 6)),
+      );
+      expect(gaps, hasLength(2));
+      expect(gaps.first.from, t0.add(const Duration(hours: 3)));
+      expect(gaps.first.to, t0.add(const Duration(hours: 5)));
+      expect(gaps.first.scope, CaptureGapScope.device);
+      expect(gaps.last.from, t0.add(const Duration(minutes: 10)));
+    });
+
+    test(
+      'access that is off right now runs up to the instant asked about',
+      () async {
+        await repo.openCaptureSession(t0);
+        await repo.closeCaptureSession(t0.add(const Duration(minutes: 10)));
+
+        final DateTime now = t0.add(const Duration(hours: 4));
+        final List<CaptureGap> gaps = await repo.captureGaps(now: now);
+        expect(gaps.single.from, t0.add(const Duration(minutes: 10)));
+        expect(gaps.single.to, now);
+      },
+    );
+
+    test(
+      "an app's own switch being off is a gap in that app and in no other",
+      () async {
+        await repo.openCaptureSession(t0);
+        await repo.upsertSeenApp(
+          package: 'com.whatsapp',
+          label: 'WhatsApp',
+          enabledIfNew: true,
+          at: t0,
+        );
+        await repo.setAppEnabled('com.whatsapp', enabled: true, at: t0);
+        await repo.setAppEnabled(
+          'com.whatsapp',
+          enabled: false,
+          at: t0.add(const Duration(hours: 1)),
+        );
+        await repo.setAppEnabled(
+          'com.whatsapp',
+          enabled: true,
+          at: t0.add(const Duration(hours: 3)),
+        );
+
+        final DateTime now = t0.add(const Duration(hours: 4));
+        final List<CaptureGap> mine = await repo.captureGaps(
+          package: 'com.whatsapp',
+          now: now,
+        );
+        expect(mine.single.scope, CaptureGapScope.app);
+        expect(mine.single.from, t0.add(const Duration(hours: 1)));
+        expect(mine.single.to, t0.add(const Duration(hours: 3)));
+
+        expect(
+          await repo.captureGaps(package: 'org.telegram.messenger', now: now),
+          isEmpty,
+          reason: "another app's switch took nothing from this one",
+        );
+      },
+    );
+
+    test(
+      'a shipped app that was never switched has no app-level start',
+      () async {
+        // Only the switch moving writes an `app_capture_sessions` row, so a
+        // shipped app captured by default has none — and INB-10 must not read
+        // that absence as a history beginning at epoch.
+        expect(
+          await repo.firstCaptureSessionStart(package: 'com.whatsapp'),
+          isNull,
+        );
+      },
+    );
 
     // Write-once was never the defect. Nothing called it: a device drill that
     // ran thirty listener sessions and captured eighteen messages finished with

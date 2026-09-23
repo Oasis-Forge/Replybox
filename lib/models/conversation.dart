@@ -33,6 +33,40 @@ enum KeySource {
   );
 }
 
+/// Characters a reader cannot see but [String.trim] leaves behind, because the
+/// Unicode standard does not class them as whitespace: the soft hyphen, the
+/// Arabic letter mark, the zero-width space and joiners, the bidirectional
+/// embedding and isolate controls, the invisible maths operators and the byte
+/// order mark.
+const Set<int> _invisibleRunes = <int>{
+  0x00AD, // soft hyphen
+  0x061C, // Arabic letter mark
+  0x180E, // Mongolian vowel separator
+  0x200B, 0x200C, 0x200D, 0x200E, 0x200F, // zero width, joiners, LRM/RLM
+  0x202A, 0x202B, 0x202C, 0x202D, 0x202E, // bidi embedding and override
+  0x2060, 0x2061, 0x2062, 0x2063, 0x2064, // word joiner, invisible operators
+  0x2066, 0x2067, 0x2068, 0x2069, // bidi isolates
+  0xFEFF, // byte order mark
+};
+
+/// Whether [value] holds nothing a reader could see.
+///
+/// Not the same question as `isEmpty`, and INB-2 turns on the difference. A
+/// notification can arrive carrying a title of one space, or of one zero-width
+/// space, and such a title stores as a perfectly non-empty string that draws as
+/// nothing at all: the row would show a blank name, take no initials from it,
+/// and — because the title was "not empty" — say nothing about the notification
+/// having arrived without one. That blank is the exact gap INB-2 exists to
+/// close, so "no name" here means no visible character rather than no character.
+bool isBlank(String value) {
+  for (final int rune in value.runes) {
+    if (_invisibleRunes.contains(rune)) continue;
+    if (String.fromCharCode(rune).trim().isEmpty) continue;
+    return false;
+  }
+  return true;
+}
+
 /// A thread in the inbox: one conversation inside one source app (CAP-3).
 class Conversation {
   const Conversation({
@@ -112,7 +146,10 @@ class Conversation {
   bool get isDeleted => deletedAt != null;
 
   /// Whether the thread arrived without a name (INB-2).
-  bool get isUnnamed => title.isEmpty;
+  ///
+  /// [isBlank] and not `isEmpty`: a title of one space draws as nothing, and a
+  /// row that drew it would be nameless while claiming to have a name.
+  bool get isUnnamed => isBlank(title);
 
   Map<String, Object?> toMap() => <String, Object?>{
     'id': id,

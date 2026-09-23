@@ -175,6 +175,18 @@ class ReplyboxListenerService : NotificationListenerService() {
         // been cancelled. Only for notifications that survived the filter: an action
         // for something the app never stored could never be reached anyway.
         NotificationProjection.replyAction(sbn.notification)?.let { ReplyActions.remember(sbn.key, it) }
+        // INB-13's `Open chat`, and the only path that can open a source app the
+        // manifest's <queries> does not declare: a content intent needs no package
+        // visibility at all, while getLaunchIntentForPackage answers null for every
+        // undeclared package (INB-20 keeps QUERY_ALL_PACKAGES out of the build). So
+        // without this line the thread's only control is dead for every app that
+        // reached the inbox by posting rather than by shipping in the list.
+        //
+        // Same entry, same eviction, same lifetime as the reply action above
+        // (ReplyActions): one of the two handles may be absent, and nothing here
+        // reads the intent -- it is held as the source app built it and sent that
+        // way (product principle 1).
+        sbn.notification.contentIntent?.let { ReplyActions.rememberContentIntent(sbn.key, it) }
         enqueue(NotificationProjection.project("posted", sbn))
     }
 
@@ -250,10 +262,29 @@ class ReplyboxListenerService : NotificationListenerService() {
     }
 
     /**
-     * INB-1, INB-20: the label the chooser shows. A package outside the manifest's
-     * `<queries>` is invisible to the package manager (INB-16 notes nobody has
-     * measured whether a bound listener is exempt), so the package name is the
-     * fallback -- never a guess, and never a reason to drop the row.
+     * INB-1, INB-20: the label the chooser shows, resolved at the moment the package
+     * posts.
+     *
+     * Since the manifest's `<queries>` gained a MAIN + LAUNCHER intent filter
+     * (22 September 2026) every launchable app on the phone is visible to this
+     * process, so this resolves a real label for effectively every package that can
+     * reach this callback. The package-name fallback is no longer package visibility
+     * hiding an app that is plainly there: what is left under it is a package the
+     * manager genuinely cannot resolve -- one with no launcher activity, or one
+     * uninstalled between the post and this line. It stays a fallback and never a
+     * dropped row, because INB-20's row is keyed on the package and the label is only
+     * what it is drawn with.
+     *
+     * Why this call is inside the promise but outside [SourceAppInfo.mayAsk]: the
+     * promise is that Replybox asks the phone only about a package that has already
+     * sent the user a notification, and `packageName` here *is* that package --
+     * [capture] calls this for the notification it is holding and for nothing else.
+     * It cannot route through `mayAsk`, because `mayAsk` answers from [CaptureStore]'s
+     * record of what has posted and the very next line is the `recordSeen` write that
+     * creates it: this call is the source of that record rather than a consumer of it,
+     * and gating it on itself would mean no package could ever be named the first time
+     * it wrote. That is why QueriesDeclarationTest keeps this file on the short list
+     * allowed to hold a `PackageManager` at all.
      *
      * A binder call, which is half of why [capture] runs off the main thread.
      */

@@ -59,6 +59,37 @@ class NoopCaptureFilter implements CaptureFilter {
   }
 }
 
+/// Answers [PackagePresence.unknown] for every package, which is exactly what a
+/// device with no package manager to ask can honestly say (INB-16).
+///
+/// Never [PackagePresence.gone] by default, and that is the point: a fake that
+/// reported an uninstall would let a widget test assert the one sentence INB-16
+/// forbids the app to say without having seen it — and the test would pass on
+/// the build that says it wrongly.
+///
+/// [identities] seeds specific answers for a test that needs a row with an icon
+/// or a `sourceAppGone` line. Anything it does not name stays unknown.
+class NoopPackageInfoService implements PackageInfoService {
+  const NoopPackageInfoService({
+    this.identities = const <String, SourceAppIdentity>{},
+  });
+
+  final Map<String, SourceAppIdentity> identities;
+
+  @override
+  Future<SourceAppIdentity> lookup(String package) async =>
+      lookupCached(package)!;
+
+  /// Answers synchronously and always, because this fake has nothing to fetch:
+  /// a seeded row draws in the first frame rather than after a pump.
+  @override
+  SourceAppIdentity? lookupCached(String package) =>
+      identities[package] ?? SourceAppIdentity.unknown(package);
+
+  @override
+  void forgetAll() {}
+}
+
 class NoopReplyService implements ReplyService {
   const NoopReplyService();
 
@@ -73,13 +104,46 @@ class NoopReplyService implements ReplyService {
       throw StateError('no reply action held (CAP-14)');
 }
 
+/// Starts nothing, and says so.
+///
+/// [succeeds] defaulted to **true** and that is what hid the defect this class
+/// is now named by: `main.dart` handed one of these to the Android build, so
+/// INB-13's control launched nothing on a real phone and the screen — which
+/// returns early on success — swallowed the snackbar that would have said so.
+/// A no-op that claims success is not a fake of a launcher; it is a fake of a
+/// launcher that worked, and it makes every test above it pass on a path the
+/// app cannot reach.
+///
+/// False is also the honest answer on its own terms, which is this file's rule
+/// (see the header): an unconfigured device has no package manager to resolve a
+/// launcher intent and no listener holding a content intent, so nothing opens.
+/// A test that wants the other branch says `succeeds: true` and, by saying it,
+/// states that it is asserting about a launch that landed.
 class NoopAppLauncher implements AppLauncher {
-  const NoopAppLauncher({this.succeeds = true});
+  const NoopAppLauncher({this.succeeds = false, this.holdsChat = false});
 
+  /// Whether a launch this fake was asked to make is reported as having landed.
+  /// Covers both of INB-13's paths, because both are the same promise to the
+  /// screen: the app opened, or it did not.
   final bool succeeds;
+
+  /// Whether this fake claims the listener still holds a content intent
+  /// (INB-13's `Open chat`).
+  ///
+  /// False by default and separate from [succeeds] for the same reason the
+  /// interface separates them: a fake that held a chat by default would draw
+  /// `Open chat` on every thread in every test, which is the state a cold start
+  /// never has. A test that wants that state says so.
+  final bool holdsChat;
 
   @override
   Future<bool> open(String package) async => succeeds;
+
+  @override
+  Future<bool> canOpenChat(String notificationKey) async => holdsChat;
+
+  @override
+  Future<bool> openChat(String notificationKey) async => succeeds;
 }
 
 class NoopReminderScheduler implements ReminderScheduler {
@@ -126,6 +190,7 @@ class NoopAppLock implements AppLock {
 DeviceServices noopServices() => DeviceServices(
   notifications: const NoopNotificationSource(),
   captureFilter: NoopCaptureFilter(),
+  packages: const NoopPackageInfoService(),
   reply: const NoopReplyService(),
   launcher: const NoopAppLauncher(),
   reminders: const NoopReminderScheduler(),

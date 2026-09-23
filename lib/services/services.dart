@@ -216,12 +216,301 @@ abstract interface class ReplyService {
   Future<void> send(Conversation conversation, String text);
 }
 
+/// What the app is allowed to say about whether a source app is still on the
+/// phone (INB-16).
+///
+/// Three values, and deliberately not a `bool`. Two of these are things the app
+/// has seen; the third is a thing it cannot see, and INB-16 is explicit that the
+/// two must not be confused — *the app never tells the user an app is
+/// uninstalled unless it can see that it is.* A boolean has nowhere to put
+/// [unknown], so it gets folded into [gone] and a row grows a `sourceAppGone`
+/// line about an app the user still has installed.
+///
+/// There is no `isGone` convenience getter here and there should not be one: its
+/// negation would read as "installed" for a package the app cannot see at all,
+/// which puts the same collapse back one layer down. Callers switch on all three.
+enum PackagePresence {
+  /// The package manager resolved the package. A label, and usually an icon,
+  /// came with it.
+  ///
+  /// Since 22 September 2026 that is possible for any launchable app and not
+  /// only for the shipped six: the manifest's `<queries>` carries a
+  /// MAIN + LAUNCHER filter beside the six `<package>` entries, so an app that
+  /// joined the inbox by posting (INB-20) resolves here like any other.
+  ///
+  /// **This does not mean the app can be opened**, and reading it that way is
+  /// the defect the 23 September 2026 drill found: `com.android.shell` resolves
+  /// here with a real label and has no launcher activity, so the thread drew
+  /// `Open Shell` and every tap failed. [SourceAppIdentity.launchability] is the
+  /// question a control has to ask.
+  installed,
+
+  /// The package manager says there is no such package, for a package the app
+  /// was willing to ask about. This is the only answer that means an uninstall.
+  ///
+  /// INB-16: the conversation keeps its title and its messages, falls back to a
+  /// generic source icon, and shows the `sourceAppGone` line in place of
+  /// INB-13's control.
+  ///
+  /// Exact for the six the manifest names one by one — they are visible
+  /// whatever shape they are in, so a not-found is absence and nothing else.
+  /// For any other package it carries one residual, stated in `SourceAppInfo`
+  /// and repeated here because this is the value a screen draws a sentence
+  /// from: an app that is still installed, has no launcher activity **and is
+  /// withheld from this process entirely** answers not-found and so reads as
+  /// `gone`. That residual used to be every non-launchable app; the 23
+  /// September 2026 drill measured one that resolves perfectly well
+  /// (`com.android.shell`), so a non-launchable package the phone does show is
+  /// now [installed] with [Launchability.noLauncher] and keeps its name and its
+  /// icon. Either way the messages are untouched (DEL-1).
+  gone,
+
+  /// The app cannot tell, and says less rather than guessing (INB-16).
+  ///
+  /// Four things produce it, and they are all "the app did not learn anything"
+  /// rather than "the app learned the package is missing":
+  ///
+  ///  * the package has never posted a notification to this phone and is not
+  ///    one of the shipped six, so the native side refused to ask at all
+  ///    (`SourceAppInfo.mayAsk`) — the promise that Replybox never reads the
+  ///    device's app list, held in code now that the manifest no longer holds
+  ///    it;
+  ///  * the lookup was made and failed — a dead binder, a `SecurityException`,
+  ///    anything that is not "no such package" — because a failure is not
+  ///    evidence of an uninstall;
+  ///  * there is no Android under this build at all: a host VM, a widget test,
+  ///    or a channel with no listener registered;
+  ///  * the reply could not be read — a missing key, a presence string this
+  ///    build does not know, a wrong type.
+  ///
+  /// INB-16: the list row keeps `Open in app`, and a launch that fails reports
+  /// only that the app could not be opened.
+  ///
+  /// **The thread's bottom bar does not offer a launcher intent here**, and
+  /// that is the app stopping short of a promise it cannot keep rather than the
+  /// app saying more. The first bullet is the case that matters: a package the
+  /// native side refused to look up is one it will also refuse to launch
+  /// ([AppLauncher.open] applies the same gate), so `Open in app` there could
+  /// only ever produce INB-13's snackbar. The bar offers `Open chat` when
+  /// [AppLauncher.canOpenChat] says this process still holds the notification —
+  /// the one path that needs no visibility and no gate — and otherwise says
+  /// that Replybox cannot open the app, which names no uninstall and claims
+  /// nothing about the phone.
+  unknown,
+}
+
+/// Whether a package the phone says is installed has anything to open
+/// (INB-13, corrected 23 September 2026).
+///
+/// A second question, beside [PackagePresence], because they are two different
+/// facts and the control needs the second one. `com.android.shell` is installed,
+/// resolves a label and an icon, and has no launcher activity: the thread asked
+/// "does this package exist", drew `Open Shell`, and answered every tap with
+/// INB-13's snackbar. `installed` is not `launchable`.
+///
+/// Three values for the same reason [PackagePresence] has three: the app can
+/// learn that there is something to open, learn that there is not, or learn
+/// nothing — and only the middle one is a sentence it may put on screen.
+enum Launchability {
+  /// The package manager resolved a launcher intent. INB-13's `Open <app>` can
+  /// be offered, and the tap has something to start.
+  launchable,
+
+  /// The package manager resolved the app and no launcher intent for it. There
+  /// is a name and an icon to draw and nothing to open, so the thread's bar says
+  /// so in place of the control (INB-13, INB-16).
+  noLauncher,
+
+  /// Nothing was learned: the package did not resolve at all ([PackagePresence]
+  /// carries that), the answer could not be read, or there is no Android under
+  /// this build.
+  ///
+  /// A caller reads this as "nothing known against a launch" and not as
+  /// [noLauncher]. The two are kept apart in the direction the rest of this file
+  /// keeps its unknowns apart: the app may withhold a control only where it has
+  /// seen that there is nothing to open, and INB-13's snackbar already covers a
+  /// launch that turns out to fail.
+  unknown,
+}
+
+/// What the package manager could say about one source app (INB-1, INB-16).
+@immutable
+class SourceAppIdentity {
+  const SourceAppIdentity({
+    required this.package,
+    required this.presence,
+    this.label,
+    this.icon,
+    this.launchability = Launchability.unknown,
+  });
+
+  /// The answer for a package the app never declared, and for every lookup that
+  /// could not be made (INB-16).
+  const SourceAppIdentity.unknown(String package)
+    : this(package: package, presence: PackagePresence.unknown);
+
+  final String package;
+
+  final PackagePresence presence;
+
+  /// The app's current label, or null unless [presence] is
+  /// [PackagePresence.installed].
+  ///
+  /// INB-1 reads this first for a declared package; for every other row the
+  /// label is the one the listener stored on the `apps` row (INB-20), and where
+  /// neither resolves the row shows the package name. That fallback chain lives
+  /// on the screen — this class reports what the package manager said and never
+  /// substitutes for it, so a null here is a fact and not an empty string
+  /// pretending to be a name.
+  final String? label;
+
+  /// The app's icon as PNG bytes, ready for `Image.memory`, or null where the
+  /// package manager resolved nothing or the icon could not be drawn.
+  ///
+  /// Bytes rather than a path: the icon belongs to the other app and is only
+  /// reachable through its package manager entry, and nothing about it is
+  /// written to disk (CAP-15 keeps icons out of the database, and this is the
+  /// same icon).
+  ///
+  /// A row that finds this null draws INB-1's generic source icon. Losing an
+  /// icon never changes [presence]: whether the app is installed and whether its
+  /// icon could be drawn are two facts, and folding them would put a `gone` line
+  /// on a row for an app that is right there.
+  final Uint8List? icon;
+
+  /// Whether there is anything to open, for a package [presence] says is
+  /// installed (INB-13).
+  ///
+  /// [Launchability.unknown] unless the answer travelled, which is what an
+  /// identity built by hand and every off-Android build gets. The channel
+  /// carries it on every `installed` answer, and `SourceAppInfoTest` holds the
+  /// native side to that; a reader that finds it missing says it learned
+  /// nothing rather than inventing either half.
+  final Launchability launchability;
+}
+
+/// INB-1's app icon and INB-16's installed-or-gone: the two things a row needs
+/// from Android that the database cannot answer.
+///
+/// One package at a time, because that is how a list asks — and because a
+/// method that took a list would be one refactor away from the enumeration
+/// INB-20 forbids. There is no "list the installed apps" here and there is no
+/// way to build one out of what is here, but since 22 September 2026 the reason
+/// is a rule rather than the manifest. Android now makes every launchable app
+/// visible to this process, and what keeps this from being a probe is that the
+/// native side answers [PackagePresence.unknown], without consulting the phone,
+/// for every package that is neither one of the shipped six nor one this
+/// install has already seen post a notification. So the set this can ever
+/// confirm is the apps that have messaged the user, plus the six the disclosure
+/// names (PERM-3) — never the phone's app list.
+abstract interface class PackageInfoService {
+  /// Asks about [package], or returns what was already asked.
+  ///
+  /// Never throws: a row has to draw either way, and INB-16 turns every failure
+  /// into [PackagePresence.unknown] rather than into an error a screen would
+  /// have to invent a sentence for.
+  Future<SourceAppIdentity> lookup(String package);
+
+  /// What [lookup] has already resolved for [package], or null if nothing has.
+  ///
+  /// Synchronous, because a list builds rows synchronously: a row that has this
+  /// draws its icon in the first frame instead of flashing the fallback through
+  /// a `FutureBuilder` on every scroll.
+  SourceAppIdentity? lookupCached(String package);
+
+  /// Drops everything remembered, so the next [lookup] asks the phone again.
+  ///
+  /// An app can be installed or uninstalled while Replybox is in the background
+  /// and nothing tells the app — watching for that would mean a broadcast
+  /// receiver, which is a component this app does not have and INB-16 does not
+  /// ask for. Calling this on resume is what makes INB-16's `gone` row appear
+  /// after the user uninstalls the source app, at the cost of one lookup per
+  /// visible package.
+  void forgetAll();
+}
+
 /// Opening the source app, for every row where replying in place is not
 /// possible (INB-13, CAP-14).
+///
+/// ## Both of INB-13's launches are here now, and why that matters
+///
+/// [openChat] used to sit on `AndroidAppLauncher` alone, as a concrete method
+/// with no caller, on the reasoning that the label came from
+/// [ReplyService.canReplyTo] and the screen that would ask ships with area REP.
+/// That reasoning was wrong about which path is the fallback.
+///
+/// [open] used to be unable to work for a package outside the manifest's
+/// `<queries>`: `getLaunchIntentForPackage` is filtered by package visibility
+/// and answered null, and the declaration was the six shipped packages. The
+/// packages outside it are exactly INB-20's second source — every app that
+/// joined the inbox by posting a notification — so for those apps [open] was
+/// not a fallback at all, it was a control that failed every time, forever.
+/// That is what the developer's 22 September 2026 decision fixed: `<queries>`
+/// now also declares a MAIN + LAUNCHER filter, so [open] resolves for any
+/// launchable app. `QUERY_ALL_PACKAGES` is still absent and still gated.
+///
+/// [openChat] is unchanged and is still the first path, not the advanced one:
+/// it needs no visibility at all — a `PendingIntent` runs as the app that
+/// created it — so it reaches an app with no launcher activity, and it lands on
+/// the conversation rather than on wherever the app opens.
+///
+/// So the interface carries both, plus [canOpenChat], because INB-13 decides
+/// which path runs **before the tap** — the label says which — and a screen that
+/// had to fire a path to learn whether it existed would draw `Open chat` and
+/// then a snackbar.
 abstract interface class AppLauncher {
-  /// Launches [package]. Returns false when the app is gone or refuses, which
-  /// INB-13 requires be shown rather than swallowed.
+  /// Starts [package]'s own launcher intent, carrying nothing the app added
+  /// (product principle 1).
+  ///
+  /// **Returns whether the app actually opened, and nothing else may answer
+  /// true.** A launch that threw, a package that resolved to nothing, a build
+  /// with no host on the channel: all false, because INB-13 spends every one of
+  /// them the same way — one snackbar, about five seconds, and nothing else on
+  /// screen changes. A true from any of those is the defect this interface
+  /// shipped with for one release: the screen returns early on success, so a
+  /// launcher that lied about opening also suppressed the sentence that would
+  /// have told the user it had not.
+  ///
+  /// A caller offers this only where [PackagePresence.installed] says the
+  /// package manager resolved the app. That is now any launchable app the user
+  /// has been messaged by, rather than only the shipped six — and the two
+  /// conditions are the same one, because the native side refuses to resolve a
+  /// launcher intent for a package it would also refuse to look up: neither
+  /// shipped nor ever seen posting means false here, without the phone being
+  /// asked (INB-20, `SourceAppInfo.mayAsk`). Offering it on
+  /// [PackagePresence.unknown] is the permanently-failing control described
+  /// above.
   Future<bool> open(String package);
+
+  /// Whether this process holds [notificationKey]'s own content intent, so
+  /// `Open chat` may be offered (INB-13, CAP-14).
+  ///
+  /// False on a cold start, after a listener reconnection, and once the entry
+  /// has been evicted — a `PendingIntent` cannot be serialised, so this is a
+  /// fact about this run and never about the conversation. Never throws: a
+  /// screen has to draw either way, and "it could not be asked" is the same
+  /// answer as "nothing is held".
+  Future<bool> canOpenChat(String notificationKey);
+
+  /// Fires the held content intent, exactly as the source app built it
+  /// (product principle 1).
+  ///
+  /// **True means the send was made, which is weaker than [open]'s true**, and
+  /// the 23 September 2026 drill is why it is written down here. Android's
+  /// background-activity-launch rules can block the activity *after*
+  /// `PendingIntent.send()` has returned successfully: on API 37 a two-second-old
+  /// Google Messages notification sent cleanly and opened nothing, and the app
+  /// had no idea. `AppLaunch.kt` now lends the send this app's own foreground
+  /// start privileges, which is the part that can be fixed here; what cannot be
+  /// fixed here is that the platform reports no outcome. So a caller of this
+  /// method owes the user one more check — that Replybox actually stopped being
+  /// the app on screen — before it treats a true as a launch
+  /// (`thread_screen.dart`).
+  ///
+  /// False here is never a reason to try [open] instead: the user was offered
+  /// `Open chat`, and landing them on an app's home screen is the same lie in
+  /// the other direction (`AppLaunch.kt`).
+  Future<bool> openChat(String notificationKey);
 }
 
 /// Snooze and nudge alarms. Nothing uses it until the Triage area ships; the
@@ -256,6 +545,7 @@ class DeviceServices {
   const DeviceServices({
     required this.notifications,
     required this.captureFilter,
+    required this.packages,
     required this.reply,
     required this.launcher,
     required this.reminders,
@@ -267,6 +557,9 @@ class DeviceServices {
 
   /// INB-22's other half: the switch the chooser moved, pushed down at once.
   final CaptureFilter captureFilter;
+
+  /// INB-1's icon and label, and INB-16's installed-or-gone.
+  final PackageInfoService packages;
 
   final ReplyService reply;
   final AppLauncher launcher;

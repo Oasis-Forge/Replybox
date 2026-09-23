@@ -50,6 +50,50 @@ typedef _StoredEntry = ({
   int sentAt,
 });
 
+/// What one source app has in the inbox: the conversations the list can show
+/// from it, and the arrival time of its newest message (INB-14, INB-21).
+typedef PackageActivity = ({int conversations, DateTime newestMessageAt});
+
+/// Which table a [CaptureGap] was read off.
+enum CaptureGapScope {
+  /// `capture_sessions`: the listener was unbound, or notification access was
+  /// off, so nothing at all was captured (CAP-12).
+  device,
+
+  /// `app_capture_sessions`: access was on and this one app's row was off, so
+  /// its notifications were dropped before the queue (CAP-1, INB-22).
+  app,
+}
+
+/// A stretch of time the app knows it was not capturing (CAP-12, INB-10).
+///
+/// Derived from the session rows, never stored: a gap is the absence between
+/// two sessions, and storing an absence means writing a row every time nothing
+/// happens.
+class CaptureGap {
+  const CaptureGap({required this.from, required this.to, required this.scope});
+
+  /// When capture stopped — the `ended_at` of the session before the gap.
+  final DateTime from;
+
+  /// When it resumed, or [Repository.captureGaps]'s `now` where it has not.
+  final DateTime to;
+
+  final CaptureGapScope scope;
+
+  Duration get duration => to.difference(from);
+
+  /// Whether this gap falls inside a thread's range, which is what decides
+  /// whether INB-10's notice mentions it at all. Half-open at both ends: a gap
+  /// that ends exactly when the thread's oldest message arrived took nothing
+  /// from it.
+  bool overlaps(DateTime start, DateTime end) =>
+      from.isBefore(end) && to.isAfter(start);
+
+  @override
+  String toString() => 'CaptureGap(${scope.name}, $from → $to)';
+}
+
 /// Every read and write of stored data goes through here.
 ///
 /// Providers call this; nothing else touches SQL. Soft deletion is applied
@@ -121,22 +165,74 @@ class Repository {
     return updated;
   }
 
+  /// The `last_seen_at` of a row that exists because the user touched its
+  /// switch and not because the listener saw the app post (INB-20, INB-21).
+  ///
+  /// `apps.last_seen_at` is `NOT NULL`, and INB-21 needs "seen posting" and
+  /// "never seen posting" kept apart — they are its third group and its
+  /// fourth. Epoch is the sentinel for the second, because there is no instant
+  /// before it and nothing else in the schema can mean absent. A real sighting
+  /// overwrites it ([upsertSeenApp] always writes the instant it was handed),
+  /// so a row only carries this until the app posts once.
+  ///
+  /// Stating it here rather than in the chooser keeps the two readers — the
+  /// write below and INB-21's grouping — on one definition.
+  static final DateTime neverSeenPosting = DateTime.fromMillisecondsSinceEpoch(
+    0,
+    isUtc: true,
+  );
+
+  /// Whether this row exists only because a switch moved, never because the
+  /// listener saw the package post something (INB-21).
+  static bool hasNeverPosted(SourceApp app) =>
+      !app.lastSeenAt.isAfter(neverSeenPosting);
+
   /// Turning an app on or off (INB-22). Leaves everything already captured in
   /// the inbox (CAP-1).
+  ///
+  /// [labelIfNew] opens a row for a package that has none. A shipped app is
+  /// captured from the first notification the listener sees (CAP-1) and so has
+  /// no `apps` row until it posts — INB-21 puts exactly those rows in its
+  /// second group at first launch — and without this the one switch on that row
+  /// would move on screen and change nothing on disk. The row it opens carries
+  /// [neverSeenPosting], because the listener has not seen this package and a
+  /// row that claimed otherwise would sort itself into INB-21's third group on
+  /// a sighting that never happened.
+  ///
+  /// Null [labelIfNew] keeps the old behaviour — no row, no write — for the
+  /// callers that are reacting to stored state rather than to a user's tap.
   Future<void> setAppEnabled(
     String package, {
     required bool enabled,
     required DateTime at,
+    String? labelIfNew,
   }) async {
     final Database db = await _database;
     final SourceApp? app = await appByPackage(package);
-    if (app == null) return;
-    await db.update(
-      'apps',
-      app.copyWith(enabled: enabled, updatedAt: at).toMap(),
-      where: 'id = ?',
-      whereArgs: <Object?>[app.id],
-    );
+    if (app == null && labelIfNew == null) return;
+    if (app == null) {
+      await db.insert(
+        'apps',
+        SourceApp(
+          id: newId(),
+          package: package,
+          label: labelIfNew!,
+          enabled: enabled,
+          lastSeenAt: neverSeenPosting,
+          // The record's own clock is when the row was written; only
+          // `last_seen_at` is a claim about the listener (REC-1).
+          createdAt: at,
+          updatedAt: at,
+        ).toMap(),
+      );
+    } else {
+      await db.update(
+        'apps',
+        app.copyWith(enabled: enabled, updatedAt: at).toMap(),
+        where: 'id = ?',
+        whereArgs: <Object?>[app.id],
+      );
+    }
     // One row per enable and per disable: a single timestamp cannot carry more
     // than one gap (INB-10, INB-22).
     if (enabled) {
@@ -164,6 +260,35 @@ class Repository {
   /// The inbox list, newest first (INB-4). Ties break by `created_at` then
   /// `id`, so two reads of the same data are always in the same order — the
   /// spike's burst put five messages on one timestamp, so ties are real.
+  ///
+  /// ## No `LIMIT`, deliberately
+  ///
+  /// This is the one unbounded read left, and it stays unbounded. A window here
+  /// would drop the oldest conversations off the end of the list with nothing
+  /// on screen saying so — no rule fixes a list window, INB-15 has no empty
+  /// state for it, INB-10's "scrolling loads nothing" is about a thread, and
+  /// search (area SRCH) does not exist yet to reach what fell off. Hiding a
+  /// user's conversations under a screen that looks complete is the failure
+  /// this whole area is written against (product principle 3), and it is not
+  /// worth trading for a scan.
+  ///
+  /// What the scan actually costs, so the choice is a measurement and not a
+  /// shrug. `idx_conversations_recent` is `(last_message_at DESC) WHERE
+  /// deleted_at IS NULL`, so this is an index walk in the order it returns and
+  /// never a sort; the work is one row read and one [Conversation] built per
+  /// conversation. The ceiling is the number of **conversations** — one row per
+  /// thread per app, not per message — so a heavy user after years sits in the
+  /// low thousands, and the list read costs on that order: thousands of small
+  /// objects, plus one [newestMessages] query per four hundred of them.
+  /// [unreadCounts] and [conversationActivityByPackage] scale with the same
+  /// number, not with the message table.
+  ///
+  /// The frequency was the real cost and it is fixed where it belongs, in the
+  /// state layer: a capture signal fires per message, so `InboxProvider` and
+  /// `AppsProvider` coalesce their signal-driven reads into one in flight and
+  /// one queued, and `AppsProvider` does not read at all until its screen has
+  /// been opened. If this ever does need bounding, it needs a rule and a
+  /// sentence on screen first.
   Future<List<Conversation>> conversations({List<String>? packages}) async {
     final Database db = await _database;
     final bool filtered = packages != null && packages.isNotEmpty;
@@ -176,6 +301,23 @@ class Repository {
       orderBy: 'last_message_at DESC, created_at DESC, id ASC',
     );
     return rows.map(Conversation.fromMap).toList();
+  }
+
+  /// One thread by id, for the screen that opens it.
+  ///
+  /// Deleted rows are excluded (DEL-1): a conversation inside its Undo window
+  /// is gone from every read, and the thread screen has to find it gone too —
+  /// otherwise a row the list stopped drawing is still openable from a route
+  /// the user left behind.
+  Future<Conversation?> conversationById(String id) async {
+    final Database db = await _database;
+    final List<Map<String, Object?>> rows = await db.query(
+      'conversations',
+      where: 'id = ? AND deleted_at IS NULL',
+      whereArgs: <Object?>[id],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : Conversation.fromMap(rows.first);
   }
 
   /// Finds a thread by its identity (CAP-3), including one the user deleted,
@@ -256,19 +398,269 @@ class Repository {
     });
   }
 
+  /// INB-22's separate, explicit action on an included-apps row: soft-deletes
+  /// every conversation captured from one package and every message in them,
+  /// in one step, so one Undo restores all of it (CAP-16, DEL-1, DEL-2).
+  ///
+  /// One `deleted_at` stamp across the whole step, for the same reason
+  /// [deleteConversation] uses one: the stamp is what
+  /// [undeleteConversationsForPackage] matches on, and a step that wrote two
+  /// instants would restore half of itself.
+  ///
+  /// Turning the switch off is *not* this (INB-22): that leaves everything
+  /// already captured in the inbox. Returns how many conversations went, which
+  /// is what the row has to be able to say afterwards.
+  Future<int> deleteConversationsForPackage(String package, DateTime at) async {
+    final Database db = await _database;
+    return db.transaction((Transaction txn) async {
+      final int stamp = timeToDb(at);
+      final List<Map<String, Object?>> targets = await txn.query(
+        'conversations',
+        columns: <String>['id'],
+        where: 'package = ? AND deleted_at IS NULL',
+        whereArgs: <Object?>[package],
+      );
+      if (targets.isEmpty) return 0;
+      final List<String> ids = <String>[
+        for (final Map<String, Object?> row in targets) row['id']! as String,
+      ];
+      final String placeholders = List<String>.filled(
+        ids.length,
+        '?',
+      ).join(',');
+      await txn.update(
+        'conversations',
+        <String, Object?>{'deleted_at': stamp, 'updated_at': stamp},
+        where: 'id IN ($placeholders)',
+        whereArgs: ids,
+      );
+      await txn.update(
+        'messages',
+        <String, Object?>{'deleted_at': stamp, 'updated_at': stamp},
+        where: 'conversation_id IN ($placeholders) AND deleted_at IS NULL',
+        whereArgs: ids,
+      );
+      return ids.length;
+    });
+  }
+
+  /// Undo for [deleteConversationsForPackage]. Restores exactly what that step
+  /// took and nothing else: a conversation or a message the user had deleted
+  /// earlier stays deleted (CAP-23, DEL-1).
+  Future<void> undeleteConversationsForPackage(
+    String package,
+    DateTime deletedAt,
+  ) async {
+    final Database db = await _database;
+    await db.transaction((Transaction txn) async {
+      final int stamp = timeToDb(deletedAt);
+      final List<Map<String, Object?>> targets = await txn.query(
+        'conversations',
+        columns: <String>['id'],
+        where: 'package = ? AND deleted_at = ?',
+        whereArgs: <Object?>[package, stamp],
+      );
+      if (targets.isEmpty) return;
+      final List<String> ids = <String>[
+        for (final Map<String, Object?> row in targets) row['id']! as String,
+      ];
+      final String placeholders = List<String>.filled(
+        ids.length,
+        '?',
+      ).join(',');
+      await txn.update(
+        'conversations',
+        <String, Object?>{'deleted_at': null},
+        where: 'id IN ($placeholders)',
+        whereArgs: ids,
+      );
+      await txn.update(
+        'messages',
+        <String, Object?>{'deleted_at': null},
+        where: 'conversation_id IN ($placeholders) AND deleted_at = ?',
+        whereArgs: <Object?>[...ids, stamp],
+      );
+    });
+  }
+
   // --- messages ---------------------------------------------------------
+
+  /// How many messages a thread reads at once (INB-7).
+  ///
+  /// The read runs on every open **and** on every capture signal, which fires
+  /// for a message from any app, so an unbounded one turns a long thread into
+  /// a whole table materialised as objects several times a minute. Five hundred
+  /// is well past what anyone scrolls in one sitting and small enough that the
+  /// repeat costs nothing.
+  ///
+  /// A thread longer than this shows its newest five hundred messages and
+  /// nothing older. INB-10 already forbids the screen from suggesting more can
+  /// be loaded — scrolling to the top loads nothing and shows no spinner — and
+  /// the notice above the thread still names the real date its history begins,
+  /// because that date comes from [firstCaptureSessionStart] and
+  /// [oldestMessageAt] rather than from whatever this read returned.
+  static const int threadWindow = 500;
 
   /// A thread, oldest first (INB-7). The tie-break order matches the dedup
   /// index so the read is covered by it.
-  Future<List<Message>> messages(String conversationId) async {
+  ///
+  /// [limit] keeps the newest [limit] messages and drops what is older, still
+  /// oldest-first: the newest end is the end the thread opens on, and INB-7's
+  /// order read backwards is the same order, so the window is a suffix of the
+  /// thread rather than an independently chosen set.
+  Future<List<Message>> messages(String conversationId, {int? limit}) async {
+    final Database db = await _database;
+    if (limit == null) {
+      final List<Map<String, Object?>> rows = await db.query(
+        'messages',
+        where: 'conversation_id = ? AND deleted_at IS NULL',
+        whereArgs: <Object?>[conversationId],
+        orderBy: 'sent_at ASC, created_at ASC, history_index ASC, id ASC',
+      );
+      return rows.map(Message.fromMap).toList();
+    }
+    final List<Map<String, Object?>> rows = await db.query(
+      'messages',
+      where: 'conversation_id = ? AND deleted_at IS NULL',
+      whereArgs: <Object?>[conversationId],
+      orderBy: 'sent_at DESC, created_at DESC, history_index DESC, id DESC',
+      limit: limit,
+    );
+    return rows.reversed.map(Message.fromMap).toList();
+  }
+
+  /// The arrival time of the oldest message a thread still holds, or null where
+  /// it holds none (DEL-1).
+  ///
+  /// One row off `idx_messages_content`, so INB-10's notice can name the real
+  /// beginning of a thread that [messages] only read the newest window of.
+  Future<DateTime?> oldestMessageAt(String conversationId) async {
+    final Database db = await _database;
+    final List<Map<String, Object?>> rows = await db.query(
+      'messages',
+      columns: <String>['sent_at'],
+      where: 'conversation_id = ? AND deleted_at IS NULL',
+      whereArgs: <Object?>[conversationId],
+      orderBy: 'sent_at ASC, created_at ASC, history_index ASC, id ASC',
+      limit: 1,
+    );
+    return rows.isEmpty ? null : timeFromDb(rows.first['sent_at']);
+  }
+
+  /// The newest message a thread holds: INB-7's order, read from the other end.
+  ///
+  /// The four keys are INB-7's exactly, reversed — arrival time, then the
+  /// arrival order of the notification that carried it, then its position in
+  /// that notification's history, then `id`. Reusing that one order is what
+  /// makes this row *the last row of the thread* rather than an independently
+  /// chosen "newest": a burst puts five messages on one instant, and two reads
+  /// that disagreed on which of them is last would draw a preview that does not
+  /// match the bottom of the thread the user then opens.
+  ///
+  /// Soft-deleted rows are excluded, so deleting the newest message moves the
+  /// preview back to the one before it rather than leaving a deleted line on
+  /// screen (DEL-1).
+  Future<Message?> newestMessage(String conversationId) async {
     final Database db = await _database;
     final List<Map<String, Object?>> rows = await db.query(
       'messages',
       where: 'conversation_id = ? AND deleted_at IS NULL',
       whereArgs: <Object?>[conversationId],
-      orderBy: 'sent_at ASC, created_at ASC, history_index ASC, id ASC',
+      orderBy: 'sent_at DESC, created_at DESC, history_index DESC, id DESC',
+      limit: 1,
     );
-    return rows.map(Message.fromMap).toList();
+    return rows.isEmpty ? null : Message.fromMap(rows.first);
+  }
+
+  /// [newestMessage] for a whole list, keyed by conversation id (INB-1).
+  ///
+  /// One query for the common case instead of one per row. It joins on
+  /// `conversations.last_message_at`, which INB-4 defines as the arrival time
+  /// of the newest message, so the join lands on the handful of rows tied at
+  /// that instant and the tie is then broken in Dart by INB-7's remaining keys.
+  ///
+  /// `last_message_at` only ever moves forward (see [upsertConversation]), so
+  /// it can sit *past* every message the thread still holds — the newest one
+  /// was deleted, or an outbound message that has not confirmed yet bumped it
+  /// (INB-9). Those conversations fall through to a single [newestMessage] each
+  /// rather than being reported as empty, because a row with no preview at all
+  /// is what a user reads as lost data.
+  ///
+  /// No window function and no row-value syntax: `minSdk` is 24, and the SQLite
+  /// that ships with Android 7 has neither.
+  ///
+  /// **Bounded on both sides.** The join asks only about the conversations it
+  /// was handed — without that predicate it was a scan of the whole `messages`
+  /// table joined to the whole `conversations` table on every read, including
+  /// every read behind a chip filter that had narrowed the list to one app. The
+  /// ids go in [_sqlVariableChunk] at a time, because a parameter list is not a
+  /// place to find out what the device's `SQLITE_MAX_VARIABLE_NUMBER` is.
+  ///
+  /// The fallback is capped at [newestMessageFallbackLimit] queries for the
+  /// same reason. It fires only for a conversation whose `last_message_at` sits
+  /// past every message it still holds, which is rare; a database where it is
+  /// not would otherwise turn one list read into one query per row. Past the
+  /// cap a row simply has no preview, which INB-1 already draws — the row keeps
+  /// its title, its time and its unread count.
+  Future<Map<String, Message>> newestMessages(
+    List<Conversation> conversations,
+  ) async {
+    if (conversations.isEmpty) return const <String, Message>{};
+    final Database db = await _database;
+    final List<String> wanted = <String>[
+      for (final Conversation c in conversations) c.id,
+    ];
+    final Map<String, Message> newest = <String, Message>{};
+    for (final List<String> chunk in _chunked(wanted)) {
+      final String placeholders = List<String>.filled(
+        chunk.length,
+        '?',
+      ).join(',');
+      final List<Map<String, Object?>> rows = await db.rawQuery('''
+      SELECT m.* FROM messages m
+      JOIN conversations c
+        ON c.id = m.conversation_id AND m.sent_at = c.last_message_at
+      WHERE c.deleted_at IS NULL AND m.deleted_at IS NULL
+        AND m.conversation_id IN ($placeholders)
+      ORDER BY m.conversation_id ASC, m.created_at ASC, m.history_index ASC,
+               m.id ASC
+    ''', chunk);
+      for (final Map<String, Object?> row in rows) {
+        // Ascending order, so the last row written for a conversation is the
+        // one INB-7 puts at the bottom of the thread.
+        newest[row['conversation_id']! as String] = Message.fromMap(row);
+      }
+    }
+    int fallbacks = 0;
+    for (final Conversation c in conversations) {
+      if (newest.containsKey(c.id)) continue;
+      if (++fallbacks > newestMessageFallbackLimit) break;
+      final Message? fallback = await newestMessage(c.id);
+      if (fallback != null) newest[c.id] = fallback;
+    }
+    return newest;
+  }
+
+  /// How many ids go into one `IN (...)` list.
+  ///
+  /// SQLite's `SQLITE_MAX_VARIABLE_NUMBER` defaults to 999 on the builds that
+  /// ship with the older Android versions `minSdk` 24 reaches, and a read that
+  /// exceeded it would throw rather than return fewer rows.
+  static const int _sqlVariableChunk = 400;
+
+  /// The most conversations one list read will fall back to a single-row query
+  /// for. See [newestMessages].
+  static const int newestMessageFallbackLimit = 200;
+
+  static Iterable<List<String>> _chunked(List<String> values) sync* {
+    for (int i = 0; i < values.length; i += _sqlVariableChunk) {
+      yield values.sublist(
+        i,
+        i + _sqlVariableChunk > values.length
+            ? values.length
+            : i + _sqlVariableChunk,
+      );
+    }
   }
 
   /// How far back the alignment reads, in rows, for one notification key.
@@ -767,6 +1159,87 @@ class Repository {
     return count ?? 0;
   }
 
+  /// [unreadCount] for every conversation the list can show, keyed by
+  /// conversation id (INB-5).
+  ///
+  /// One query rather than one per row, and the same three conditions as
+  /// [unreadCount]: inbound only (INB-9 counts an undecided direction in no
+  /// badge), soft-deleted messages excluded (DEL-1), and newer than
+  /// `read_through_at` — which is the *arrival* time, so a hidden message is
+  /// counted by the notification's `postTime` exactly as INB-4 sorts on it
+  /// (CAP-8).
+  ///
+  /// A conversation with nothing unread is absent from the map rather than
+  /// present with a zero; callers read it with a `?? 0`, and the 99+ cap is a
+  /// display decision that belongs to the state layer, not to this read.
+  ///
+  /// `COALESCE(..., -1)` and not `0`: an instant of 0 is epoch, which is a
+  /// value a read marker could legitimately hold, and comparing against 0 would
+  /// then silently mean "nothing is unread".
+  Future<Map<String, int>> unreadCounts({List<String>? packages}) async {
+    final Database db = await _database;
+    final bool filtered = packages != null && packages.isNotEmpty;
+    final String clause = filtered
+        ? 'AND c.package IN (${List<String>.filled(packages.length, '?').join(',')})'
+        : '';
+    final List<Map<String, Object?>> rows = await db.rawQuery(
+      '''
+      SELECT m.conversation_id AS conversation_id, COUNT(*) AS unread
+      FROM messages m
+      JOIN conversations c ON c.id = m.conversation_id
+      WHERE c.deleted_at IS NULL AND m.deleted_at IS NULL
+        AND m.direction = ?
+        AND m.sent_at > COALESCE(c.read_through_at, -1)
+        $clause
+      GROUP BY m.conversation_id
+    ''',
+      <Object?>[Direction.inbound.name, if (filtered) ...packages],
+    );
+    return <String, int>{
+      for (final Map<String, Object?> row in rows)
+        row['conversation_id']! as String: row['unread']! as int,
+    };
+  }
+
+  /// What each source app has in the inbox right now: how many conversations
+  /// the list can show from it, and the arrival time of its newest message.
+  ///
+  /// Two screens read this and neither can be built without it. INB-14's chip
+  /// row is one chip per package with **at least one conversation the list can
+  /// show**, ordered by that app's newest message; INB-21's included-apps list
+  /// carries a conversation count on every row and orders its first group by
+  /// the most recent captured message. Both are the same aggregate, so it is
+  /// read once.
+  ///
+  /// Deleted conversations are excluded, which is what makes INB-6's Undo
+  /// window behave: while a conversation sits inside it, it is out of the
+  /// count and out of its app's newest-message time, exactly as it is out of
+  /// the list. Whether a chip nevertheless stays on screen is INB-14's
+  /// question, and it is answered in the state layer, where the selection
+  /// lives.
+  ///
+  /// A package with nothing showable is absent from the map, not present with
+  /// a zero: "has a conversation the list can show" is the chip row's whole
+  /// membership test.
+  Future<Map<String, PackageActivity>> conversationActivityByPackage() async {
+    final Database db = await _database;
+    final List<Map<String, Object?>> rows = await db.rawQuery('''
+      SELECT package,
+             COUNT(*) AS conversations,
+             MAX(last_message_at) AS newest
+      FROM conversations
+      WHERE deleted_at IS NULL
+      GROUP BY package
+    ''');
+    return <String, PackageActivity>{
+      for (final Map<String, Object?> row in rows)
+        row['package']! as String: (
+          conversations: row['conversations']! as int,
+          newestMessageAt: timeFromDb(row['newest']),
+        ),
+    };
+  }
+
   // --- settings and sessions -------------------------------------------
 
   Future<String?> setting(String key) async {
@@ -801,6 +1274,146 @@ class Repository {
     }
     await setSetting('installed_at', timeToDb(nowIfUnset).toString());
     return nowIfUnset;
+  }
+
+  /// [installedAt] without the write.
+  ///
+  /// INB-10's notice is a read on a screen, and a read that writes the date it
+  /// is about would move the app's own history to whenever a thread was first
+  /// opened. `main.dart` writes the key once per launch before any screen
+  /// exists; everything after that asks this.
+  Future<DateTime?> installedAtOrNull() async {
+    final String? stored = await setting('installed_at');
+    if (stored == null) return null;
+    final int? parsed = int.tryParse(stored);
+    return parsed == null
+        ? null
+        : DateTime.fromMillisecondsSinceEpoch(parsed, isUtc: true);
+  }
+
+  /// The start of the earliest session in either table (CAP-12, INB-10).
+  ///
+  /// With no [package] this is the first time the listener ever bound. With
+  /// one it is the start of the earliest `app_capture_sessions` row for that
+  /// package — the first time its switch was turned on. Null in either case
+  /// means there has never been such a session, which is not the same as one
+  /// that started at epoch and is why this is nullable rather than defaulted.
+  ///
+  /// A shipped app captured by default (CAP-1) has no `app_capture_sessions`
+  /// row at all, because only the switch moving writes one, so null here means
+  /// "no app-level start to take into account" and INB-10 then falls back to
+  /// the other two dates.
+  Future<DateTime?> firstCaptureSessionStart({String? package}) async {
+    final Database db = await _database;
+    final int? earliest = Sqflite.firstIntValue(
+      await db.rawQuery(
+        package == null
+            ? 'SELECT MIN(started_at) FROM capture_sessions '
+                  'WHERE deleted_at IS NULL'
+            : 'SELECT MIN(started_at) FROM app_capture_sessions '
+                  'WHERE package = ? AND deleted_at IS NULL',
+        <Object?>[?package],
+      ),
+    );
+    return earliest == null ? null : timeFromDb(earliest);
+  }
+
+  /// The shortest absence the app will report (INB-10).
+  ///
+  /// A rebind at boot closes one session and opens another a few seconds
+  /// later, and CAP-12 is explicit that a window interrupted while access
+  /// stayed on is one window rather than two. Reporting those seconds as an
+  /// absence would put a gap notice on a thread nobody lost anything from,
+  /// which trains the user to ignore the one notice that matters.
+  static const Duration minimumReportedGap = Duration(seconds: 60);
+
+  /// Every stretch the app knows it was not capturing, newest first (CAP-12,
+  /// INB-10).
+  ///
+  /// Reads both tables where [package] is given — a gap in either one is an
+  /// absence in that thread, because access being off and the app's own row
+  /// being off take the same messages away — and only `capture_sessions`
+  /// otherwise.
+  ///
+  /// A gap is the gap *between* sessions, plus the one still running where the
+  /// newest session has closed: that one ends at [now], which also bounds every
+  /// other end, so a session row stamped in the future cannot produce a gap
+  /// that has not happened. Sessions are walked with a running high-water mark
+  /// rather than pairwise, so an overlapping pair — which CAP-12's one-window
+  /// guard should make impossible and a drained-out-of-order queue can still
+  /// produce — never invents a gap inside a stretch another row covers. A
+  /// session still open covers everything from its start onwards and ends the
+  /// walk.
+  ///
+  /// Nothing shorter than [minimumReportedGap] is returned, argued there.
+  Future<List<CaptureGap>> captureGaps({
+    String? package,
+    required DateTime now,
+  }) async {
+    final List<CaptureGap> gaps = <CaptureGap>[
+      ...await _gapsIn(
+        table: 'capture_sessions',
+        package: null,
+        scope: CaptureGapScope.device,
+        now: now,
+      ),
+      if (package != null)
+        ...await _gapsIn(
+          table: 'app_capture_sessions',
+          package: package,
+          scope: CaptureGapScope.app,
+          now: now,
+        ),
+    ];
+    gaps.sort((CaptureGap a, CaptureGap b) {
+      final int byStart = b.from.compareTo(a.from);
+      return byStart != 0 ? byStart : b.to.compareTo(a.to);
+    });
+    return gaps;
+  }
+
+  Future<List<CaptureGap>> _gapsIn({
+    required String table,
+    required String? package,
+    required CaptureGapScope scope,
+    required DateTime now,
+  }) async {
+    final Database db = await _database;
+    final List<Map<String, Object?>> rows = await db.query(
+      table,
+      columns: <String>['started_at', 'ended_at'],
+      where: package == null
+          ? 'deleted_at IS NULL'
+          : 'package = ? AND deleted_at IS NULL',
+      whereArgs: package == null ? null : <Object?>[package],
+      orderBy: 'started_at ASC',
+    );
+    if (rows.isEmpty) return const <CaptureGap>[];
+
+    final List<CaptureGap> gaps = <CaptureGap>[];
+    DateTime? coveredUntil;
+    bool stillOpen = false;
+    for (final Map<String, Object?> row in rows) {
+      final DateTime startedAt = timeFromDb(row['started_at']);
+      final DateTime? endedAt = timeFromDbOrNull(row['ended_at']);
+      if (coveredUntil != null && startedAt.isAfter(coveredUntil)) {
+        gaps.add(CaptureGap(from: coveredUntil, to: startedAt, scope: scope));
+      }
+      if (endedAt == null) {
+        stillOpen = true;
+        break;
+      }
+      if (coveredUntil == null || endedAt.isAfter(coveredUntil)) {
+        coveredUntil = endedAt;
+      }
+    }
+    if (!stillOpen && coveredUntil != null && now.isAfter(coveredUntil)) {
+      gaps.add(CaptureGap(from: coveredUntil, to: now, scope: scope));
+    }
+    return <CaptureGap>[
+      for (final CaptureGap gap in gaps)
+        if (gap.duration > minimumReportedGap) gap,
+    ];
   }
 
   /// Opens a capture session (CAP-12): the listener bound.

@@ -192,6 +192,32 @@ jobs:
           # checked on success and the offending one on failure.
           bash tool/check_backup_rules.sh manifest.txt
 
+      # INB-16: the release workflow checks the built manifest's <queries>
+      # against lib/data/shipped_apps.dart the way it checks allowBackup. Same
+      # dump, so no second aapt2 run.
+      #
+      # This one guards a sentence on screen and the control under it, rather
+      # than a data path. PackageManager answers NameNotFound identically for
+      # "no such app" and "hidden from you", so a declaration lost in the merge
+      # does not fail anything -- it turns rows from that app into a confident
+      # uninstall notice about an app the user still has, and takes INB-13's
+      # launch control with it.
+      #
+      # Two halves since the developer's decision of 22 September 2026, and the
+      # script checks both: the six <package> entries, and the MAIN + LAUNCHER
+      # intent filter that makes `Open <app>` work for an app that joined the
+      # inbox by posting (INB-20). It also fails on any *third* intent filter or
+      # any other <queries> child, because the declaration is now the whole of
+      # what Android lets this app see and docs/privacy-policy.md describes it
+      # (CAP-27) -- a dependency widening it must not pass silently.
+      #
+      # What no gate here can check is the other half of the promise: that the
+      # app only ever *asks* about a package that has already messaged the user.
+      # That is SourceAppInfo.mayAsk, and the Kotlin unit tests above are what
+      # hold it.
+      - name: Check the release manifest's package queries
+        run: bash tool/check_queries.sh manifest.txt
+
       # Nothing is copied to dist/ and nothing is kept: this job's build is a
       # check, not a deliverable, and a downloadable CI build is one nobody can
       # install over an existing copy or upload to Play — while looking exactly

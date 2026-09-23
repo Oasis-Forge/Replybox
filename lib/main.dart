@@ -8,10 +8,18 @@ import 'package:provider/single_child_widget.dart';
 import 'db/db_helper.dart';
 import 'db/repository.dart';
 import 'l10n/app_localizations.dart';
+import 'models/conversation.dart';
+import 'providers/apps_provider.dart';
 import 'providers/inbox_provider.dart';
+import 'screens/included_apps_screen.dart';
+import 'screens/inbox_screen.dart';
+import 'screens/thread_screen.dart';
+import 'services/android_app_launcher.dart';
 import 'services/android_capture_service.dart';
+import 'services/android_package_service.dart';
 import 'services/noop_services.dart';
 import 'services/services.dart';
+import 'theme.dart';
 
 /// The only place the real device services are ever built
 /// (docs/STACK_NOTES.md). Everything below this line takes them as an
@@ -47,10 +55,21 @@ void main() {
               // service is constructed — `InboxProvider` is handed one, and can
               // reach for nothing.
               captureFilter: source,
+              // INB-1's icon and label and INB-16's installed-or-gone. Its own
+              // class rather than a third face on `source`: it talks to the
+              // package manager, not to the listener, and it holds a cache the
+              // listener has no business in.
+              packages: AndroidPackageInfoService(),
               reply: AndroidReplyService(),
-              // Still no-op, and each waits on its own item: the launcher on
-              // INB-13's control, the rest on Triage, Plus and App lock.
-              launcher: const NoopAppLauncher(),
+              // INB-13's control. This was `NoopAppLauncher()`, whose `succeeds`
+              // defaulted to true, so on a phone the control started nothing and
+              // reported that it had: the screen returns early on success, so
+              // the "could not be opened" snackbar never drew either. Until area
+              // REP ships, that control is the second tap of INB-18's reply
+              // path, which made the app's only action a lie.
+              launcher: const AndroidAppLauncher(),
+              // Still no-op, each waiting on its own item: Triage, Plus and
+              // App lock.
               reminders: const NoopReminderScheduler(),
               entitlements: const NoopEntitlements(),
               appLock: const NoopAppLock(),
@@ -88,13 +107,34 @@ class ReplyboxApp extends StatefulWidget {
   State<ReplyboxApp> createState() => _ReplyboxAppState();
 }
 
-class _ReplyboxAppState extends State<ReplyboxApp> {
+class _ReplyboxAppState extends State<ReplyboxApp> with WidgetsBindingObserver {
+  /// INB-25's other half, built here because this is where the drain loop is
+  /// started and where every provider that can be on screen is made.
+  ///
+  /// The loop's `onChanged` used to go straight to `_inbox.load`, which redrew
+  /// one screen with a spinner. A single callback can only reach one object,
+  /// and a message arriving while a *thread* is open has the same one-second
+  /// deadline as one arriving while the list is open. So the loop nudges this,
+  /// and every provider listens to it.
+  final CaptureSignal _captureSignal = CaptureSignal();
+
   /// Built once here rather than in `build`, because the drain loop holds a
   /// reference to it: a provider rebuilt under the loop would leave the loop
   /// refreshing a state object no screen is reading.
   late final InboxProvider _inbox = InboxProvider(
     widget.repository,
     widget.services,
+    captureSignal: _captureSignal,
+  );
+
+  /// INB-20's list, built here for the same reason as the inbox's: it listens
+  /// to the capture signal, and a provider rebuilt under that listener would
+  /// leave the signal nudging an object no screen is reading. Its first read is
+  /// the screen's, not ours — this costs nothing until someone opens it.
+  late final AppsProvider _apps = AppsProvider(
+    widget.repository,
+    widget.services,
+    captureSignal: _captureSignal,
   );
 
   /// The one the drain loop was given, or one of our own when there is no loop.
@@ -103,6 +143,7 @@ class _ReplyboxAppState extends State<ReplyboxApp> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     // CAP-12's first clause — "no history from before it was installed" — is a
     // date the app has to hold, and nothing on the capture path was writing it:
     // a device drill that ran thirty listener sessions and captured eighteen
@@ -120,13 +161,74 @@ class _ReplyboxAppState extends State<ReplyboxApp> {
     // The listener kept queueing while the app was closed, so the first drain
     // happens before anyone has had a chance to pull anything to refresh
     // (CAP-13, INB-25).
-    widget.captureSync?.start(onChanged: _inbox.load);
+    widget.captureSync?.start(onChanged: _captureSignal.captured);
+  }
+
+  /// What a resume changes that nothing else can tell the app about.
+  ///
+  /// Two things, and neither is the queue: `CaptureSync` drains on resume by
+  /// itself and nudges [_captureSignal] when it wrote something (INB-25).
+  ///
+  ///  * An app can be installed or uninstalled while Replybox is in the
+  ///    background and nothing tells it. Dropping what the package manager said
+  ///    is what makes INB-16's `sourceAppGone` line appear after the user
+  ///    uninstalls a source app, and what makes a re-installed app's icon come
+  ///    back.
+  ///  * A resume that captured nothing still crossed a midnight, and INB-1's
+  ///    times are relative to today. Reading again is cheap and keeps a row
+  ///    from claiming this morning's clock time for yesterday's message.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    widget.services.packages.forgetAll();
+    unawaited(_refreshAfterDrain());
+  }
+
+  /// INB-25's second half: a message captured while the app was not
+  /// foregrounded "is on screen in the first frame of the list drawn after the
+  /// next resume, **because the queue is drained before the list reads it**".
+  ///
+  /// That "because" is an ordering, and it was a race. `CaptureSync` observes
+  /// the same resume and drains by itself, so the list's own resume read used
+  /// to start beside the drain rather than after it: it read the database as it
+  /// stood before the queue was applied, and the message reached the screen a
+  /// frame or more later, when the drain's own signal arrived. Awaiting the
+  /// pass here is what makes the read follow it.
+  ///
+  /// A pass already running is joined rather than started again — `sync` keeps
+  /// a request made mid-pass and loops — so this observer firing before
+  /// `CaptureSync`'s own still ends with one drain, fully applied, before the
+  /// read. Nothing inside a pass escapes as an error, and off Android there is
+  /// no sync at all and this is just the refresh.
+  Future<void> _refreshAfterDrain() async {
+    await widget.captureSync?.sync();
+    await _inbox.refresh();
+  }
+
+  /// INB-18's first tap. The push is awaited because INB-5 makes the thread a
+  /// write: opening it advances `read_through_at` to the newest message the
+  /// conversation holds, so the count the list is still drawing is stale the
+  /// moment the reader backs out. Nothing else refreshes the list on a return —
+  /// the capture signal fires only when capture wrote something, and reading a
+  /// thread is not capture — so the badge stayed on the row until the next
+  /// message arrived from anywhere.
+  Future<void> _openConversation(
+    BuildContext context,
+    Conversation conversation,
+  ) async {
+    await Navigator.of(context).push(ThreadScreen.route(conversation));
+    await _inbox.refresh();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     widget.captureSync?.stop();
     _inbox.dispose();
+    _apps.dispose();
+    // After the two that listen to it, so neither is left holding a listener
+    // on a disposed notifier.
+    _captureSignal.dispose();
     // Only the one we made. Disposing a notifier we were handed would leave
     // whoever handed it over holding something that throws on its next report.
     if (widget.health == null) _health.dispose();
@@ -138,6 +240,27 @@ class _ReplyboxAppState extends State<ReplyboxApp> {
     return MultiProvider(
       providers: <SingleChildWidget>[
         ChangeNotifierProvider<InboxProvider>.value(value: _inbox),
+        // The row's icon and its installed-or-gone (INB-1, INB-16) come from a
+        // device service, and a widget cannot be handed one down six
+        // constructors. Not a `ChangeNotifierProvider`: these are not state and
+        // nothing rebuilds when one of them answers — the widget that asked
+        // does.
+        Provider<DeviceServices>.value(value: widget.services),
+        // For the screens this one routes to: a thread has the same
+        // one-second deadline as the list (INB-25), and its provider is built
+        // where it is opened rather than here, so it needs to be able to reach
+        // the same signal.
+        // A `ChangeNotifierProvider`, because a plain `Provider` refuses a
+        // `Listenable` — and because `.value` is what keeps ownership here:
+        // this one is disposed in [dispose], after the two providers that
+        // listen to it. Nothing watches it, so nothing rebuilds from it; the
+        // screens that take it `read` it once and subscribe themselves.
+        ChangeNotifierProvider<CaptureSignal>.value(value: _captureSignal),
+        // The thread builds its own provider when it opens, because a thread's
+        // lifetime is the time one is open, so it needs the database the same
+        // way it needs the services.
+        Provider<Repository>.value(value: widget.repository),
+        ChangeNotifierProvider<AppsProvider>.value(value: _apps),
         // PERM-8's banner reads this. It is separate from `InboxProvider`
         // because it is not inbox state: it is what the listener could not do,
         // and it keeps moving while the inbox has nothing new to show.
@@ -148,41 +271,22 @@ class _ReplyboxAppState extends State<ReplyboxApp> {
             AppLocalizations.of(context).appTitle,
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
-        theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
-        ),
-        darkTheme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: Colors.indigo,
-            brightness: Brightness.dark,
-          ),
-        ),
-        home: const _Placeholder(),
-      ),
-    );
-  }
-}
-
-/// What the app shows until the Inbox item ships its screens.
-///
-/// It deliberately uses the real empty-state message rather than a lorem
-/// placeholder, so the string, the generation and the locale wiring are all
-/// exercised by the widget test that covers this.
-class _Placeholder extends StatelessWidget {
-  const _Placeholder();
-
-  @override
-  Widget build(BuildContext context) {
-    final AppLocalizations l10n = AppLocalizations.of(context);
-    return Scaffold(
-      appBar: AppBar(title: Text(l10n.appTitle)),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Text(
-            l10n.inboxEmptyNothingYet,
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.bodyLarge,
+        theme: replyboxTheme(),
+        darkTheme: replyboxTheme(brightness: Brightness.dark),
+        routes: <String, WidgetBuilder>{
+          IncludedAppsScreen.routeName: (BuildContext context) =>
+              const IncludedAppsScreen(),
+        },
+        home: InboxScreen(
+          // INB-18's second tap is on the screen this push opens, so the push
+          // itself is not one: the row is tap one, and the control in the
+          // thread's bottom bar is tap two.
+          onOpenConversation:
+              (BuildContext context, Conversation conversation) =>
+                  unawaited(_openConversation(context, conversation)),
+          // INB-15's *Nothing yet* action, and INB-20's list.
+          onOpenIncludedApps: (BuildContext context) => unawaited(
+            Navigator.of(context).pushNamed(IncludedAppsScreen.routeName),
           ),
         ),
       ),

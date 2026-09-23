@@ -4,13 +4,29 @@
   "@appTitle": {
     "description": "The application's title."
   },
-  "inboxEmptyNothingYet": "Nothing yet. Messages from the apps you've included will appear here.",
+  "inboxEmptyNothingYet": "Nothing yet. Messages from the apps you have included will appear here.",
   "@inboxEmptyNothingYet": {
-    "description": "Inbox empty state shown when access is granted and nothing has arrived yet (INB-15, RUN-1)."
+    "description": "Body of the Nothing yet empty state where no app label resolves, so none can be named (INB-15, RUN-1)."
+  },
+  "inboxEmptyNothingYetApps": "{othersCount, plural, =0{Messages from {apps} will appear here.} =1{Messages from {apps} and 1 more app will appear here.} other{Messages from {apps} and {othersCount} more apps will appear here.}}",
+  "@inboxEmptyNothingYetApps": {
+    "description": "Body of the Nothing yet empty state, naming up to three included apps by label, most recently seen first, and a count of the rest (INB-15, RUN-1).",
+    "placeholders": {
+      "apps": {
+        "type": "String"
+      },
+      "othersCount": {
+        "type": "int"
+      }
+    }
   },
   "conversationUnnamed": "This conversation arrived without a name",
   "@conversationUnnamed": {
     "description": "Shown on a conversation row whose notification arrived without a name (INB-2)."
+  },
+  "conversationNoMessages": "No messages here",
+  "@conversationNoMessages": {
+    "description": "The row's preview line where the conversation holds no message to preview — every message soft-deleted (DEL-1), or last_message_at sitting past everything stored. Said rather than left blank, so the gap has a name on it (INB-1, product principle 3)."
   },
   "messageHidden": "Your phone hid this message. Open it in the app it came from.",
   "@messageHidden": {
@@ -19,5 +35,461 @@
   "openInApp": "Open in app",
   "@openInApp": {
     "description": "Action on a row with no live reply action (INB-13, CAP-14)."
+  },
+  "inboxTitle": "Inbox",
+  "@inboxTitle": {
+    "description": "Title of the conversation list, which is the whole first screen in v1 (INB-19)."
+  },
+  "conversationPreviewWithSender": "{sender}: {text}",
+  "@conversationPreviewWithSender": {
+    "description": "Row preview for a group conversation, where the sender's name prefixes the message (INB-1). A one-to-one conversation shows the text alone.",
+    "placeholders": {
+      "sender": {
+        "type": "String"
+      },
+      "text": {
+        "type": "String"
+      }
+    }
+  },
+  "unreadCountOverflow": "99+",
+  "@unreadCountOverflow": {
+    "description": "Unread badge beyond 99; counts up to 99 are formatted as numbers by LANG-3 (INB-5)."
+  },
+  "deleteConversation": "Delete",
+  "@deleteConversation": {
+    "description": "The one control a swipe on a conversation row reveals (INB-6)."
+  },
+  "conversationDeleted": "Conversation deleted",
+  "@conversationDeleted": {
+    "description": "Snackbar shown for about five seconds after a swipe delete (INB-6, DEL-2)."
+  },
+  "inboxLoadFailed": "Replybox could not read your messages.",
+  "@inboxLoadFailed": {
+    "description": "Shown in place of the list when the read failed and there is nothing to draw. Never the exception: repository.dart composes a message containing a sender and a message's text, and no screen may put that on a screen or into a crash report (INB-24)."
+  },
+  "threadLoadFailed": "Replybox could not read this conversation.",
+  "@threadLoadFailed": {
+    "description": "Shown in place of the thread when its read failed and there is nothing to draw. Never the exception (INB-24)."
+  },
+  "includedAppsLoadFailed": "Replybox could not read your apps.",
+  "@includedAppsLoadFailed": {
+    "description": "Shown in place of the included-apps list when its read failed and there is nothing to draw. Never the exception (INB-24)."
+  },
+  "changeFailed": "That did not save. Nothing changed.",
+  "@changeFailed": {
+    "description": "Snackbar after a write that failed — a delete, an undo, or removing an app's stored messages. Says what happened without naming the conversation or quoting the exception (INB-24)."
+  },
+  "retry": "Try again",
+  "@retry": {
+    "description": "The one action beside a failure line: runs the read again."
+  },
+  "undo": "Undo",
+  "@undo": {
+    "description": "Action on the delete snackbar, which restores the conversation and all its messages in one step (INB-6, CAP-16)."
+  },
+  "threadHistoryNotice": "Replybox holds only what arrived as a notification. A message edited, unsent or deleted in the app it came from still reads here as it first arrived.",
+  "@threadHistoryNotice": {
+    "description": "First row of every thread, above the oldest message: a standing notice, not dismissible (INB-10, CAP-26)."
+  },
+  "threadHistorySince": "The earliest it could have seen this conversation is {date}.",
+  "@threadHistorySince": {
+    "description": "Part of the standing thread notice naming the first date anything here could have been captured (INB-10, CAP-12). The date is formatted by LANG-3 and passed in as text.",
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "threadHistoryAccessOffUntil": "Notification access was off until {date}, so nothing from before then is here.",
+  "@threadHistoryAccessOffUntil": {
+    "description": "Variant of the standing thread notice where no capture session existed before the first possible date (INB-10, CAP-12).",
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "threadHistoryGaps": "{otherCount, plural, =0{Nothing could be captured here between {start} and {end}.} =1{Nothing could be captured here between {start} and {end}, and there is one other gap like it.} other{Nothing could be captured here between {start} and {end}, and there are {otherCount} other gaps like it.}}",
+  "@threadHistoryGaps": {
+    "description": "Part of the standing thread notice naming the most recent capture gap overlapping this thread and a count of the others; gaps under 60 seconds are not counted (INB-10, CAP-12).",
+    "placeholders": {
+      "start": {
+        "type": "String"
+      },
+      "end": {
+        "type": "String"
+      },
+      "otherCount": {
+        "type": "int"
+      }
+    }
+  },
+  "threadHistoryRetention": "This thread reaches back to {date}. Older messages were here and Replybox removed them.",
+  "@threadHistoryRetention": {
+    "description": "Variant of the standing thread notice used instead of the first-possible date when a retention window is in force and is later than it (INB-10, area RET).",
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "threadWindowed": "{count, plural, =1{This thread shows its newest message only. Older ones are stored and are not shown here.} other{This thread shows its newest {count} messages. Older ones are stored and are not shown here.}}",
+  "@threadWindowed": {
+    "description": "INB-10: the standing notice owns what this thread does not hold, and the read is bounded — so the window is stated rather than paged, because INB-10 forbids the top of the thread implying more can be loaded.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "threadConversationGone": "This conversation was deleted. There is nothing to show here.",
+  "@threadConversationGone": {
+    "description": "INB-6, INB-22 and DEL-1: the conversation was deleted while its thread was open — swiped from the list, or removed with its app's stored messages. It may still be inside its five-second Undo window, so the line says it was deleted and never that it is gone for good. Names no title and no sender (INB-24)."
+  },
+  "messageImage": "Photo",
+  "@messageImage": {
+    "description": "Placeholder drawn in place of a message whose content_kind is image, in the thread and as the row preview (INB-11, CAP-9)."
+  },
+  "messageVoice": "Voice message",
+  "@messageVoice": {
+    "description": "Placeholder for a message whose content_kind is voice (INB-11, CAP-9)."
+  },
+  "messageVideo": "Video",
+  "@messageVideo": {
+    "description": "Placeholder for a message whose content_kind is video (INB-11, CAP-9)."
+  },
+  "messageFile": "File",
+  "@messageFile": {
+    "description": "Placeholder for a message whose content_kind is file (INB-11, CAP-9)."
+  },
+  "messageOther": "Something Replybox cannot show",
+  "@messageOther": {
+    "description": "Placeholder for a message whose content_kind is other: the app says only that something arrived, never what (INB-11, CAP-9)."
+  },
+  "rawConversationNotice": "Replybox saw a notification from this app, but not a conversation. Each line below is the notification's own title and text, as the phone delivered them. Nothing was added and nothing was inferred.",
+  "@rawConversationNotice": {
+    "description": "Standing line above a raw conversation's messages, so it never reads like a chat (INB-12, CAP-21)."
+  },
+  "rawPreviewJoin": "{title} — {text}",
+  "@rawPreviewJoin": {
+    "description": "Joins a raw notification's title and text, in the row preview and in the thread. Where only one of the two is non-empty it is shown alone and no separator is drawn (INB-12).",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      },
+      "text": {
+        "type": "String"
+      }
+    }
+  },
+  "rawMessageIncomplete": "Replybox kept what the notification showed. The rest of it is in {app}.",
+  "@rawMessageIncomplete": {
+    "description": "Shown where a raw notification carried a longer body than the line stored, so the app never claims the text is complete (INB-12, product principle 3).",
+    "placeholders": {
+      "app": {
+        "type": "String"
+      }
+    }
+  },
+  "openChat": "Open chat",
+  "@openChat": {
+    "description": "Bottom-bar control when the notification's own content intent is still held in this process (INB-13)."
+  },
+  "openApp": "Open {app}",
+  "@openApp": {
+    "description": "Bottom-bar control when only the package's launcher intent is available; the app claims nothing about where it lands (INB-13).",
+    "placeholders": {
+      "app": {
+        "type": "String"
+      }
+    }
+  },
+  "openAppFailed": "Could not open that app.",
+  "@openAppFailed": {
+    "description": "Snackbar for about five seconds after a launch that threw or resolved to nothing; nothing else on screen changes (INB-13, INB-16)."
+  },
+  "hiddenNoReply": "Replybox will not answer a message it cannot show.",
+  "@hiddenNoReply": {
+    "description": "Line beside the bottom-bar control while a conversation's newest message is hidden: a capability declined, not a platform limit (INB-3, decision 8)."
+  },
+  "inboxEmptyNothingYetTitle": "Nothing yet",
+  "@inboxEmptyNothingYetTitle": {
+    "description": "Heading of the empty state shown when nothing is stored (INB-15)."
+  },
+  "inboxEmptyNothingYetNoHistory": "Only messages that arrive from now on can appear. There is none from before Replybox was installed.",
+  "@inboxEmptyNothingYetNoHistory": {
+    "description": "Second line of the Nothing yet empty state (INB-15, CAP-12)."
+  },
+  "inboxEmptyNothingYetAccessGap": "Nothing was seen while notification access was off.",
+  "@inboxEmptyNothingYetAccessGap": {
+    "description": "Added to the Nothing yet empty state where a capture_sessions gap exists (INB-15, CAP-12)."
+  },
+  "inboxEmptyNothingYetAction": "See included apps",
+  "@inboxEmptyNothingYetAction": {
+    "description": "The one action on the Nothing yet empty state; it opens the included-apps list (INB-15, INB-20)."
+  },
+  "inboxEmptyFilterTitle": "Nothing in this filter",
+  "@inboxEmptyFilterTitle": {
+    "description": "Heading of the empty state shown when a chip selection matches no conversation (INB-15)."
+  },
+  "inboxEmptyFilter": "No conversations from {apps}.",
+  "@inboxEmptyFilter": {
+    "description": "Body of the filtered empty state, naming the selected apps (INB-15, INB-14).",
+    "placeholders": {
+      "apps": {
+        "type": "String"
+      }
+    }
+  },
+  "inboxEmptyFilterAction": "Show all",
+  "@inboxEmptyFilterAction": {
+    "description": "The one action on the filtered empty state; it clears the chips back to All (INB-15, INB-14)."
+  },
+  "inboxEmptyPendingUndo": "That was the last conversation here. Undo is still open below.",
+  "@inboxEmptyPendingUndo": {
+    "description": "INB-15: no empty state is blank. The list's last conversation is inside INB-6's Undo window, so the list is empty for about five seconds; the one action is the Undo in the message below, so this line carries no button of its own."
+  },
+  "inboxEmptyNoResultsTitle": "No results",
+  "@inboxEmptyNoResultsTitle": {
+    "description": "Heading of the empty state shown when a search returns nothing (INB-15)."
+  },
+  "inboxEmptyNoResults": "Nothing matches “{query}”.",
+  "@inboxEmptyNoResults": {
+    "description": "Body of the no-results empty state, repeating the words searched, truncated to 60 characters with an ellipsis by the screen (INB-15, area SRCH).",
+    "placeholders": {
+      "query": {
+        "type": "String"
+      }
+    }
+  },
+  "inboxEmptyNoResultsNarrowedTo": "Narrowed to {apps}.",
+  "@inboxEmptyNoResultsNarrowedTo": {
+    "description": "Added to the no-results empty state to name a narrowing in force (INB-15).",
+    "placeholders": {
+      "apps": {
+        "type": "String"
+      }
+    }
+  },
+  "inboxEmptyNoResultsClearNarrowing": "Search all apps",
+  "@inboxEmptyNoResultsClearNarrowing": {
+    "description": "The one action on the no-results empty state while a narrowing is in force; it removes the narrowing (INB-15)."
+  },
+  "inboxEmptyNoResultsClearSearch": "Clear search",
+  "@inboxEmptyNoResultsClearSearch": {
+    "description": "The one action on the no-results empty state when no narrowing is in force (INB-15)."
+  },
+  "listTwo": "{first} and {second}",
+  "@listTwo": {
+    "description": "Joins two app labels in an empty state or a filter line (INB-15, LANG-3).",
+    "placeholders": {
+      "first": {
+        "type": "String"
+      },
+      "second": {
+        "type": "String"
+      }
+    }
+  },
+  "listThree": "{first}, {second} and {third}",
+  "@listThree": {
+    "description": "Joins three app labels in an empty state or a filter line (INB-15, LANG-3).",
+    "placeholders": {
+      "first": {
+        "type": "String"
+      },
+      "second": {
+        "type": "String"
+      },
+      "third": {
+        "type": "String"
+      }
+    }
+  },
+  "sourceAppGone": "This app is no longer installed.",
+  "@sourceAppGone": {
+    "description": "Shown on a row whose source package is inside the manifest's queries declaration and is gone, in place of the bottom-bar control; the conversation and its messages stay (INB-16)."
+  },
+  "sourceAppNotOpenable": "Replybox cannot open {app}.",
+  "@sourceAppNotOpenable": {
+    "description": "Shown in the thread's bottom bar in place of INB-13's control, where nothing this process holds can open the source app and the package is outside the manifest's queries declaration: no launcher intent can resolve without the package visibility INB-20 refuses, so a control there could only ever fail. Says less rather than guessing, and names no uninstall (INB-16).",
+    "placeholders": {
+      "app": {
+        "type": "String"
+      }
+    }
+  },
+  "sourceAppNoLauncher": "{app} has no screen to open.",
+  "@sourceAppNoLauncher": {
+    "description": "Shown in the thread's bottom bar in place of INB-13's control, where the package manager resolved the app and no launcher intent for it: it is installed and has no launcher activity, so there is nothing to start and a control there would fail on every tap. Names no uninstall — the app is there (INB-13, INB-16, 23 September 2026).",
+    "placeholders": {
+      "app": {
+        "type": "String"
+      }
+    }
+  },
+  "filterAll": "All",
+  "@filterAll": {
+    "description": "The chip pinned at the leading edge of the filter row, selected exactly when no app chip is (INB-14)."
+  },
+  "includedAppsTitle": "Included apps",
+  "@includedAppsTitle": {
+    "description": "Title of the included-apps list in Settings (INB-20, INB-21)."
+  },
+  "includedAppsConversations": "{count, plural, =1{1 conversation} other{{count} conversations}}",
+  "@includedAppsConversations": {
+    "description": "Subtitle of an included-apps row, giving the number of conversations stored from that app (INB-21).",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "includedAppsNothingYet": "Nothing has arrived yet",
+  "@includedAppsNothingYet": {
+    "description": "Subtitle of an included-apps row for an app with nothing captured (INB-21)."
+  },
+  "includedAppsNotInstalled": "No longer installed",
+  "@includedAppsNotInstalled": {
+    "description": "Subtitle of an included-apps row for an app that is gone; the switch still works (INB-21, INB-16)."
+  },
+  "includedAppsSearchHint": "Search apps",
+  "@includedAppsSearchHint": {
+    "description": "Hint of the search field, which appears once the included-apps list passes ten rows (INB-21)."
+  },
+  "includedAppsMissingNote": "An app is missing until it posts a notification. Replybox never lists the apps on your phone, so it learns about one the first time it posts.",
+  "@includedAppsMissingNote": {
+    "description": "Permanent line at the bottom of the included-apps list, so an absent app reads as a stated limit rather than a bug (INB-21, INB-20, product principle 3)."
+  },
+  "includedAppsSwitchExplainer": "Off means the next notification this app posts is not stored. What is already here stays.",
+  "@includedAppsSwitchExplainer": {
+    "description": "Stated beside the switch, which is the whole confirmation of turning a row off (INB-22, CAP-1)."
+  },
+  "includedAppsSwitchOnNotLive": "Saved here, but the notification listener has not been told yet. Messages from this app can still be missed until Replybox is opened again.",
+  "@includedAppsSwitchOnNotLive": {
+    "description": "INB-22: the row and the database moved but CAP-1's filter did not hear it, and the row was switched on — so the listener goes on dropping this package's notifications and those messages are lost rather than delayed. Drawn on the row it happened to. Never the exception (INB-24)."
+  },
+  "includedAppsSwitchOffNotLive": "Saved here, but the notification listener has not been told yet. Messages from this app can still be stored until Replybox is opened again.",
+  "@includedAppsSwitchOffNotLive": {
+    "description": "INB-22: the same failure with the row switched off — the listener goes on capturing from this package until the next launch or resume re-mirrors. Drawn on the row it happened to. Never the exception (INB-24)."
+  },
+  "includedAppsRemoveMessages": "Remove stored messages",
+  "@includedAppsRemoveMessages": {
+    "description": "The separate, explicit action on an included-apps row that soft-deletes that app's conversations and messages in one step (INB-22, CAP-16)."
+  },
+  "includedAppsRemoveMessagesDone": "{count, plural, =1{1 conversation removed} other{{count} conversations removed}}",
+  "@includedAppsRemoveMessagesDone": {
+    "description": "Snackbar shown for about five seconds after removing an app's stored messages, with Undo (INB-22, INB-6).",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "threadSourceAppOff": "{app} is switched off, so no further messages will arrive here until you switch it back on.",
+  "@threadSourceAppOff": {
+    "description": "Standing line in every thread from an app whose included-apps row is off, so a thread that stopped never reads as one that went quiet (INB-22, CAP-12).",
+    "placeholders": {
+      "app": {
+        "type": "String"
+      }
+    }
+  },
+  "semanticsConversationRow": "{title}, from {app}, {preview}, {time}",
+  "@semanticsConversationRow": {
+    "description": "Semantic label of a conversation row (INB-23, INB-1).",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      },
+      "app": {
+        "type": "String"
+      },
+      "preview": {
+        "type": "String"
+      },
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "semanticsUnreadCount": "{count, plural, =1{1 unread message} other{{count} unread messages}}",
+  "@semanticsUnreadCount": {
+    "description": "Semantic label of the trailing unread count on a conversation row (INB-23, INB-5).",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "semanticsConversationRowUnread": "{row}, {unread}",
+  "@semanticsConversationRowUnread": {
+    "description": "Joins a conversation row's semantic label to its unread count, so a reader who cannot see the badge is still told it is there (INB-23, INB-5). A join and not a concatenation in code: the punctuation between two read-aloud clauses belongs to the language (LANG-2).",
+    "placeholders": {
+      "row": {
+        "type": "String"
+      },
+      "unread": {
+        "type": "String"
+      }
+    }
+  },
+  "semanticsFilterChip": "Show only {app}",
+  "@semanticsFilterChip": {
+    "description": "Semantic label of an app chip in the filter row (INB-23, INB-14).",
+    "placeholders": {
+      "app": {
+        "type": "String"
+      }
+    }
+  },
+  "semanticsFilterChipAll": "Show every app",
+  "@semanticsFilterChipAll": {
+    "description": "Semantic label of the All chip (INB-23, INB-14)."
+  },
+  "semanticsDeleteConversation": "Delete {title}",
+  "@semanticsDeleteConversation": {
+    "description": "Semantic label of the Delete control a swipe reveals (INB-23, INB-6).",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "semanticsIncludedApps": "Included apps",
+  "@semanticsIncludedApps": {
+    "description": "Semantic label of the control in the inbox's app bar that opens the included-apps list (INB-23, INB-20)."
+  },
+  "semanticsOpenInApp": "Open this conversation in {app}",
+  "@semanticsOpenInApp": {
+    "description": "Semantic label of the thread's bottom-bar control on INB-13's launcher-intent path, whose visible label is openApp. The content-intent path has semanticsOpenChat (INB-23, INB-13).",
+    "placeholders": {
+      "app": {
+        "type": "String"
+      }
+    }
+  },
+  "semanticsOpenChat": "Open this conversation where it arrived",
+  "@semanticsOpenChat": {
+    "description": "Semantic label of the thread's bottom-bar control on INB-13's content-intent path, whose visible label is openChat. Separate from semanticsOpenInApp because INB-13 says the label says which of the two launches will run, and one label for both left a screen-reader user unable to tell them apart (INB-23, INB-13)."
+  },
+  "semanticsAppSwitch": "Capture messages from {app}",
+  "@semanticsAppSwitch": {
+    "description": "Semantic label of the switch on an included-apps row (INB-23, INB-21, INB-22).",
+    "placeholders": {
+      "app": {
+        "type": "String"
+      }
+    }
+  },
+  "semanticsRemoveMessages": "Remove stored messages from {app}",
+  "@semanticsRemoveMessages": {
+    "description": "Semantic label of the remove-stored-messages action on an included-apps row (INB-23, INB-22).",
+    "placeholders": {
+      "app": {
+        "type": "String"
+      }
+    }
   }
 }
