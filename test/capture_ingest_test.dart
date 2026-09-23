@@ -327,6 +327,82 @@ void main() {
       ]);
     });
 
+    test('a candidate that draws as nothing is still a key, and the thread '
+        'stays one thread', () async {
+      // The silent split this rule exists to forbid, arriving from our own
+      // code. INB-2 widened "empty" to "nothing a reader could see" for the
+      // title it draws, and the keying read the same predicate — so a thread
+      // keyed on a `shortcutId` of one space stopped resolving to that key and
+      // fell through to the notification key. The first notification opens the
+      // thread, the second opens a second one beside it, and the user's history
+      // is in the one they can no longer reach.
+      //
+      // Two different notification keys on purpose: with one key the rows would
+      // merge whatever the resolver did, so nothing would be proved.
+      await ingest.apply(
+        aPost(
+          key: 'notif-a',
+          shortcutId: ' ',
+          messages: <CapturedMessage>[anEntry(text: 'first')],
+        ),
+      );
+      await ingest.apply(
+        aPost(
+          key: 'notif-b',
+          shortcutId: ' ',
+          postTime: t0.add(const Duration(minutes: 1)),
+          messages: <CapturedMessage>[
+            anEntry(text: 'second', time: t0.add(const Duration(minutes: 1))),
+          ],
+        ),
+      );
+
+      final List<Conversation> all = await repo.conversations();
+      expect(
+        all,
+        hasLength(1),
+        reason: 'CAP-3: a keying change is migrated, never split silently',
+      );
+      expect(all.single.conversationKey, ' ');
+      expect(all.single.keySource, KeySource.shortcutId);
+      // The candidate column says the same thing as the key beside it, so a
+      // migration reading these rows cannot be told a story the key contradicts.
+      expect(all.single.shortcutId, ' ');
+      // And both messages are in the one thread the user can open.
+      final List<Message> messages = await repo.messages(all.single.id);
+      expect(messages.map((Message m) => m.text), <String>['first', 'second']);
+    });
+
+    test('a zero-width candidate keys the same way a visible one does', () async {
+      // The other shape of the same value: `​` draws as nothing and is
+      // perfectly good identity. INB-2 still folds it away for the title, which
+      // is its own question and is asserted where INB-2 is.
+      await ingest.apply(
+        aPost(
+          key: 'notif-a',
+          conversationTitle: '​',
+          shortcutId: '',
+          title: '',
+        ),
+      );
+      await ingest.apply(
+        aPost(
+          key: 'notif-b',
+          conversationTitle: '​',
+          shortcutId: '',
+          title: '',
+        ),
+      );
+
+      final Conversation c = (await repo.conversations()).single;
+      expect(c.conversationKey, '​');
+      expect(c.keySource, KeySource.conversationTitle);
+      // INB-2's question, on the same notification and answered the other way:
+      // there is no name to draw, so the row says the notification arrived
+      // without one. Both readings are right; they are not one predicate.
+      expect(c.isUnnamed, isTrue);
+    });
+
     test(
       'two threads of one app sharing a groupKey stay two threads',
       () async {
@@ -932,6 +1008,58 @@ void main() {
         expect(stored.kind, MessageKind.hidden);
         expect(stored.text, isNull);
         expect(await messagesDump(db), isNot(contains(marker)));
+      },
+    );
+
+    test('a title of one space is a title, so the message keeps its '
+        'words', () async {
+      // The two questions this notification is asked at once, and the reason
+      // one predicate cannot answer both. INB-2: "is there a name to draw?" —
+      // no, a space draws as a blank row, so the thread is unnamed. CAP-8:
+      // "did Android empty this?" — no, redaction writes `""` and this title
+      // arrived with something in it. Answered with INB-2's predicate, the
+      // notification read as redacted: the words below were stored as null and
+      // the user was told their phone had hidden a message it never touched.
+      final IngestOutcome outcome = await ingest.apply(
+        aPost(
+          title: ' ',
+          selfDisplayName: null,
+          text: 'on my way',
+          messages: <CapturedMessage>[
+            CapturedMessage(sender: '', text: 'on my way', time: t0),
+          ],
+        ),
+      );
+
+      final Message stored = (await threadOf(outcome)).single;
+      expect(stored.kind, MessageKind.text);
+      expect(stored.text, 'on my way');
+      // And INB-2 still gets its own answer from the same notification: there
+      // was no name to draw, so the row says the notification arrived without
+      // one.
+      expect((await repo.conversations()).single.isUnnamed, isTrue);
+    });
+
+    test(
+      'a title of one space is not redaction on the raw path either',
+      () async {
+        // The other half of CAP-8, on the same shape, so the two halves cannot
+        // drift apart again: here the title is the whole of the evidence, and a
+        // space is a value an app sent rather than a field Android emptied.
+        final IngestOutcome outcome = await ingest.apply(
+          aPost(
+            template: r'android.app.Notification$BigTextStyle',
+            category: 'msg',
+            title: ' ',
+            text: 'you have 3 new messages',
+            selfDisplayName: null,
+            messages: const <CapturedMessage>[],
+          ),
+        );
+
+        final Message stored = (await threadOf(outcome)).single;
+        expect(stored.kind, MessageKind.raw);
+        expect(stored.text, 'you have 3 new messages');
       },
     );
   });
